@@ -49,17 +49,18 @@ var message1 = '';
             }
         }
 
-        if(buyId > 0 && data?.rushBuyList.find(item => item.id === 94)?.status < 3){
+        // console.log("data?.status:", buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status > 3);
+        if(buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status > 3){
             let a = $.getdata('gdgdgd') || 50;
             for (let i = 0; i < a; i++) {
                 let {code,data,cnMessage} = await signIn(buyId);
                 if(code==1){
                     message1 += $.time('HH:mm:ss.S')+` 抢券${i+1}次:${data?.productName} - ${data?.title}\n`;
-                    console.log(`抢券${i + 1}次成功:`, data?.productName, '-', data?.title);
+                    // console.log(`抢券${i + 1}次成功:`, data?.productName, '-', data?.title);
 
                 }else {
                     message1 += $.time('HH:mm:ss.S')+` 抢券${i+1}次:${cnMessage}\n`;
-                    console.log(`抢券${i + 1}次失败:`, cnMessage);
+                    // console.log(`抢券${i + 1}次失败:`, cnMessage);
 
                 }
             }
@@ -159,7 +160,7 @@ async function signIn(rightid) {
     xck = encodeURIComponent(RSA_Public_Encrypt(key));
     sign = getSign(rightid);
     _in = encodeURIComponent(Encrypt_Body('channel=h5_common&rightid=' + rightid + '&sign=' + sign, key));
-    url='https://m5.amap.com/ws/vip/exchange-right?adiu=' + adiu + '&node=wechatMP&env=prod&xck_channel=default&xck=' + xck + '&in=' + _in;
+    url='https://m5-zb.amap.com/ws/vip/exchange-right?adiu=' + adiu + '&node=wechatMP&env=prod&xck_channel=default&xck=' + xck + '&in=' + _in;
     body = getBody(getSigBody(adiu, userId, sign, rightid),key);
     headers = getHeaders(sessionid);
     const rest = {url: url,body: body,headers: headers,method: "post"};
