@@ -17,10 +17,11 @@ Cookie获取/签到用这个脚本：https://raw.githubusercontent.com/wf021325/
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 const $ = new Env("高德抢券");
-const _key = 'GD_Val';
+const _key = 'GD_Val1';
 var gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
 $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';//false-true
 var message1 = '';
+
 
 !(async() => {
     if (gdVal != undefined) {
@@ -31,17 +32,11 @@ var message1 = '';
 	intCryptoJS();
     indMD5();
 
-    message1 += `----------高德抢券----------\n`;
+    message1 += `----------高德抢券（3041）----------\n`;
     let {code,data,message} = await checkIn();
-    // console.log("调用 checkIn() 函数的结果：");
-    // console.log("code:", code);
-    //  console.log("data:", data);
-    // console.log("message:", message);
-
     if(code==1 && data?.rushBuyList.length>= 2 ){
     let buyId;
         for (let i = 0; i < data.rushBuyList.length; i++) {
-            // console.log("标题:", data.rushBuyList[i].title);
             if (data.rushBuyList[i].title === "打车秒杀5元券") {
                 buyId = data.rushBuyList[i].id;
                 message1 += `查券:${data?.rushBuyList[i]?.title} - ${data?.rushBuyList[i]?.buttonText}\n`;
@@ -49,22 +44,25 @@ var message1 = '';
             }
         }
 
-        // console.log("data?.status:", buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status > 3);
-        if(buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status > 3){
+        //  console.log("data?.status:", buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status >= 3);
+        if(buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status < 3){
             let a = $.getdata('gdgdgd') || 50;
             for (let i = 0; i < a; i++) {
+                // console.log("调用 signIn() 函数的结果：",await signIn(buyId));
                 let {code,data,cnMessage} = await signIn(buyId);
+                
                 if(code==1){
                     message1 += $.time('HH:mm:ss.S')+` 抢券${i+1}次:${data?.productName} - ${data?.title}\n`;
-                    // console.log(`抢券${i + 1}次成功:`, data?.productName, '-', data?.title);
+                    //  console.log(`抢券${i + 1}次成功:`, data?.productName, '-', data?.title);
 
                 }else {
                     message1 += $.time('HH:mm:ss.S')+` 抢券${i+1}次:${cnMessage}\n`;
-                    // console.log(`抢券${i + 1}次失败:`, cnMessage);
+                    //  console.log(`抢券${i + 1}次失败:`, cnMessage);
 
                 }
             }
         }
+
     }else if(code==14){
         message1 += `查券:sessionid失效请重新获取\n`;
     }
@@ -85,6 +83,12 @@ function getSign(id) {
     const sign = 'h5_common' + id + '@oEEln6dQJK7lRfGxQjlyGthZ4loXcRHR'
     return md5(sign).toUpperCase()
 }
+
+function getSign1(userid, ts, rightid) {
+    const sign = 'h5_common' + userid + ts + rightid + '@oEEln6dQJK7lRfGxQjlyGthZ4loXcRHR'
+        return md5(sign).toUpperCase()
+}
+
 function getBody(body,key) {
     body = 'in=' + encodeURIComponent(Encrypt_Body(Json2Form(body), key));
     return body
@@ -93,7 +97,8 @@ function getHeaders(sessionid) {
     return {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 amap/12.13.1.2034 AliApp(amap/12.13.1.2034) NetType/WiFi',
-        'sessionid': sessionid
+        'sessionid': sessionid,
+        'ua':uasign
     }
 }
 function getBuylistBody(adiu, userId, sign) {
@@ -130,8 +135,11 @@ function getSigBody(adiu, userId, sign, rightid) {
         "imei": adiu,
         "idfa": adiu,
         "enterprise": "0",
-        "ts": new Date().getTime(),
-        "uid": userId,
+        //"ts": new Date().getTime(),
+      "ts": Math.floor(new Date().getTime() / 1000),
+
+        
+      "uid": userId,
         "userId": userId,
         "channel": "h5_common",
         "dip": "20020",
@@ -150,6 +158,7 @@ async function checkIn() {
     _in = encodeURIComponent(Encrypt_Body("channel=h5_common&sign=" + sign + "&uid=" + userId, key));
     url='https://m5-zb.amap.com/ws/vip/rush-buy-list?adiu=' + adiu + '&node=wechatMP&env=prod&xck_channel=default&xck=' + xck + '&in=' + _in;
     body = getBody(getBuylistBody(adiu, userId, sign),key);
+    uasign = encodeURIComponent(Encrypt_Body(url + body, key));
     headers = getHeaders(sessionid);
     const rest = {url: url,body: body,headers: headers,method: "post"};
     return await httpRequest(rest);
@@ -158,18 +167,21 @@ async function checkIn() {
 async function signIn(rightid) {
     key = getKey();
     xck = encodeURIComponent(RSA_Public_Encrypt(key));
-    sign = getSign(rightid);
-    _in = encodeURIComponent(Encrypt_Body('channel=h5_common&rightid=' + rightid + '&sign=' + sign, key));
-    url='https://m5-zb.amap.com/ws/vip/exchange-right?adiu=' + adiu + '&node=wechatMP&env=prod&xck_channel=default&xck=' + xck + '&in=' + _in;
+    ts = Math.floor(new Date().getTime() / 1000);
+    sign = getSign1(userId, ts, rightid);
+    _in = encodeURIComponent(Encrypt_Body('adiu=' + adiu + '&app_lang=zh-Hans&bizVersion=050500&channel=h5_common&dip=20020&diu=' + adiu + '&div=&eId=&enterprise=0&h5version=7.25.10&idfa=' + adiu + '&imei=' + adiu + '&isRushBuy=true&platform=android&rightID=' + rightid + '&sign=' + sign + '&tid=' + adiu + '&ts=' + ts + '&uid=' + userId + '&userId=' + userId, key));
+    url='https://m5-zb.amap.com/ws/vip/right/exchange?adiu=' + adiu + '&node=wechatMP&env=prod&xck_channel=default&xck=' + xck + '&in=' + _in;
     body = getBody(getSigBody(adiu, userId, sign, rightid),key);
+    uasign = encodeURIComponent(Encrypt_Body(url + body, key));
     headers = getHeaders(sessionid);
     const rest = {url: url,body: body,headers: headers,method: "post"};
     return await httpRequest(rest);
 }
 
-
 //通知
 async function SendMsg(message){$.isNode()?await notify.sendNotify($.name,message):$.msg($.name,"",message);}
+const notify = $.isNode() ? require('./sendNotify') : '';
+
 //DEBUG
 function debug(text){if($.is_debug==='true'){if(typeof text=="string"){console.log(text);}else if(typeof text=="object"){console.log($.toStr(text));}}}
 
