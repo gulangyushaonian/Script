@@ -8,12 +8,12 @@ let vtypeValues = jsonBody.qualities.map(quality => quality.vtype);
 // 找到 vtype 的最大值
 let maxVtype = Math.max(...vtypeValues);
 
-// 检查 maxVtype 的值是否为 -Infinity （这意味着 qualities 数组可能为空）
-if (maxVtype !== -Infinity) {
+// 如果 qualities 数组不为空，更新 quality 字段
+if (vtypeValues.length > 0) {
     jsonBody.quality = maxVtype; // 修改 quality 为最大 vtype 值
+    jsonBody.qualityName = jsonBody.qualities.find(q => q.vtype === maxVtype).name; // 更新 qualityName
 } else {
-    // 如果 qualities 为空，保留原来的 quality 值
-    console.log("No qualities available to determine max vtype.");
+    console.log("No qualities available to determine max vtype."); // 提示信息
 }
 
 // 返回修改后的 JSON 对象
