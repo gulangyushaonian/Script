@@ -2,6 +2,6 @@
 let body = $response.body;
 
 let jsonBody = JSON.parse(body);
-jsonBody.quality = 10;
+jsonBody.quality = 11;
 
 $done({ body: JSON.stringify(jsonBody) });
