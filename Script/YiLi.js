@@ -19,7 +19,8 @@ $.inviteIds = [
 
 $.cookBookIDs = [49, 45, 46, 29, 30, 14, 6];
 $.cookBookID = $.cookBookIDs[Math.floor(Math.random() * $.cookBookIDs.length)];
-$.cookBookID1 = $.cookBookIDs[Math.floor(Math.random() * $.cookBookIDs.length)];
+$.ArticleID = $.cookBookIDs[Math.floor(Math.random() * $.cookBookIDs.length)];
+
 const headers = {
   'Accept-Encoding': `gzip,deflate,br`,
   'content-type': `application/x-www-form-urlencoded`,
@@ -85,9 +86,11 @@ const body = {
       await relatedRecipe();
       await recipeTask();
       await shareTask();
+      await inRecipe1();
       await relatedRecipe1();
       await recipeTask1();
       await shareTask1();
+
       // for (let k = 0; k < $.inviteIds.length; k++) {
       //   $.inviteId = $.inviteIds[k];
       await invite();
@@ -297,7 +300,7 @@ function inRecipe() {
 
         // data = XMLtoJson(data);
 
-        $.log(`阅读：`);
+        $.log(`阅读食谱`);
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -445,9 +448,8 @@ function shareTask() {
         if (!data) return;
 
         data = XMLtoJson(data);
-        
+
         $.shareTaskResult = data;
-        $.log(`分享菜谱`);
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -458,7 +460,43 @@ function shareTask() {
   });
 }
 
-// 任务浏览干货
+// 进入干货菜谱
+function inRecipe1() {
+  const _this = this;
+  return new Promise((resolve) => {
+    const { openId, authKey } = $.userInfo;
+
+    const params = JSON.stringify({
+      ArticleID: $.ArticleID,
+    });
+    body.AuthKey = authKey;
+    body.Method = 'MALLIFCheese.JudgeArticleFavorite';
+    body.Params = params;
+
+    const opts = {
+      headers,
+      body: `RequestPack=${encodeURIComponent(JSON.stringify(body))}`,
+    };
+    opts.url = `https://club.yili.com/MALLIFChe/MCSWSIAPI.asmx/Call`;
+
+    $.post(opts, (err, resp, data) => {
+      try {
+        if (!data) return;
+
+        // data = XMLtoJson(data);
+
+        $.log(`阅读干货 `);
+      } catch (e) {
+        $.log(`========${_this.name}=====`);
+        $.logErr(e, resp);
+      } finally {
+        resolve(data);
+      }
+    });
+  });
+}
+
+// 任务干货关联
 function relatedRecipe1() {
   const _this = this;
   return new Promise((resolve) => {
@@ -493,6 +531,7 @@ function relatedRecipe1() {
     });
   });
 }
+
 // 浏览干货15s任务
 function recipeTask1() {
   const _this = this;
@@ -521,7 +560,7 @@ function recipeTask1() {
 
         data = XMLtoJson(data);
 
-        $.recipeTaskResult1 = data;
+        $.recipeTaskResult = data;
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -531,7 +570,6 @@ function recipeTask1() {
     });
   });
 }
-
 // 干货分享任务
 function shareTask1() {
   const _this = this;
@@ -539,11 +577,9 @@ function shareTask1() {
     const { openId, authKey, ClientName, StaffMobile } = $.userInfo;
 
     const params = JSON.stringify({
-      //ArticleID: 394,
-      ArticleID: $.cookBookID1
-      ReadType: 4,
+      ArticleID: $.ArticleID,
+      InteractivType: 4,
       PlatFormId: "YLCheese_SmallPragram",
-      Remark:"",
     });
     body.AuthKey = authKey;
     body.Method = 'MALLIFCheese.SaveArticleToFavorite';
@@ -561,8 +597,7 @@ function shareTask1() {
 
         data = XMLtoJson(data);
 
-        $.shareTaskResult1 = data;
-        $.log(`分享干货`);
+        $.shareTaskResult = data;
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -626,24 +661,11 @@ function showMsg() {
       $.desc += `失败 ${$.recipeTaskResult.ReturnInfo}`;
     }
 
-    $.desc += `\n🕊分享菜谱任务：`;
+    $.desc += `\n🕊分享任务：`;
     if ($.shareTaskResult.Return >= 0) {
       $.desc += `成功 ${$.shareTaskResult.ReturnInfo}`;
     } else {
       $.desc += `失败 ${$.shareTaskResult.ReturnInfo}`;
-    }
-    $.desc += `\n💫浏览干货任务：`;
-    if ($.recipeTaskResult1.Return >= 0) {
-      $.desc += `成功 ${$.recipeTaskResult1.ReturnInfo}`;
-    } else {
-      $.desc += `失败 ${$.recipeTaskResult1.ReturnInfo}`;
-    }
-
-    $.desc += `\n🪽分享干货任务：`;
-    if ($.shareTaskResult1.Return >= 0) {
-      $.desc += `成功 ${$.shareTaskResult1.ReturnInfo}`;
-    } else {
-      $.desc += `失败 ${$.shareTaskResult1.ReturnInfo}`;
     }
 
     $.msg($.name, $.subt, $.desc);
