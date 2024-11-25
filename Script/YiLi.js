@@ -468,6 +468,7 @@ function inRecipe1() {
 
     const params = JSON.stringify({
       ArticleID: $.ArticleID,
+      ReadType: $.ReadType,
     });
     body.AuthKey = authKey;
     body.Method = 'MALLIFCheese.JudgeArticleFavorite';
@@ -578,11 +579,11 @@ function shareTask1() {
 
     const params = JSON.stringify({
       ArticleID: $.ArticleID,
-      InteractivType: 4,
+      ReadType: 4,
       PlatFormId: "YLCheese_SmallPragram",
     });
     body.AuthKey = authKey;
-    body.Method = 'MALLIFCheese.SaveArticleToFavorite';
+    body.Method = 'MALLIFCheese.SaveCookBookToFavorite';
     body.Params = params;
 
     const opts = {
@@ -661,21 +662,7 @@ function showMsg() {
       $.desc += `失败 ${$.recipeTaskResult.ReturnInfo}`;
     }
 
-    $.desc += `\n🕊分享菜谱任务：`;
-    if ($.shareTaskResult.Return >= 0) {
-      $.desc += `成功 ${$.shareTaskResult.ReturnInfo}`;
-    } else {
-      $.desc += `失败 ${$.shareTaskResult.ReturnInfo}`;
-    }
-    
-    $.desc += `\n📚浏览干货任务：`;
-    if ($.recipeTaskResult.Return >= 0) {
-      $.desc += `成功 ${$.recipeTaskResult.ReturnInfo}`;
-    } else {
-      $.desc += `失败 ${$.recipeTaskResult.ReturnInfo}`;
-    }
-
-    $.desc += `\n🕊分享干货任务：`;
+    $.desc += `\n🕊分享任务：`;
     if ($.shareTaskResult.Return >= 0) {
       $.desc += `成功 ${$.shareTaskResult.ReturnInfo}`;
     } else {
