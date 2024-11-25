@@ -539,9 +539,10 @@ function shareTask1() {
     const { openId, authKey, ClientName, StaffMobile } = $.userInfo;
 
     const params = JSON.stringify({
-      ArticleID: "394",
+      ArticleID: 394,
       ReadType: 4,
       PlatFormId: "YLCheese_SmallPragram",
+      Remark:"",
     });
     body.AuthKey = authKey;
     body.Method = 'MALLIFCheese.SaveArticleToFavorite';
