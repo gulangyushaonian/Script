@@ -19,7 +19,7 @@ $.inviteIds = [
 
 $.cookBookIDs = [49, 45, 46, 29, 30, 14, 6];
 $.cookBookID = $.cookBookIDs[Math.floor(Math.random() * $.cookBookIDs.length)];
-
+$.cookBookID1 = $.cookBookIDs[Math.floor(Math.random() * $.cookBookIDs.length)];
 const headers = {
   'Accept-Encoding': `gzip,deflate,br`,
   'content-type': `application/x-www-form-urlencoded`,
@@ -482,7 +482,7 @@ function relatedRecipe1() {
 
         // data = XMLtoJson(data);
 
-        $.log(`关联食谱`);
+        $.log(`关联干货`);
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -500,7 +500,7 @@ function recipeTask1() {
 
     const params = JSON.stringify({
       ActivityCode: 'YLCheese_20230210_ViewDryGoods',
-      Remark: '浏览菜谱15秒加分',
+      Remark: '浏览干货15秒加分',
       Key: new Date().getTime(),
       Points: 15,
     });
@@ -538,7 +538,7 @@ function shareTask1() {
     const { openId, authKey, ClientName, StaffMobile } = $.userInfo;
 
     const params = JSON.stringify({
-      CookBookID: $.cookBookID,
+      CookBookID: $.cookBookID1,
       InteractivType: 4,
     });
     body.AuthKey = authKey;
