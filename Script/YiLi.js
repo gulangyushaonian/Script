@@ -627,14 +627,14 @@ function showMsg() {
     } else {
       $.desc += `失败 ${$.shareTaskResult.ReturnInfo}`;
     }
-        $.desc = `\n📚浏览干货任务：`;
+    $.desc = `\n💫浏览干货任务：`;
     if ($.recipeTaskResult1.Return >= 0) {
       $.desc += `成功 ${$.recipeTaskResult1.ReturnInfo}`;
     } else {
       $.desc += `失败 ${$.recipeTaskResult1.ReturnInfo}`;
     }
 
-    $.desc += `\n🕊分享干货任务：`;
+    $.desc += `\n🪽分享干货任务：`;
     if ($.shareTaskResult1.Return >= 0) {
       $.desc += `成功 ${$.shareTaskResult1.ReturnInfo}`;
     } else {
