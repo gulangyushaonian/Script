@@ -539,11 +539,11 @@ function shareTask1() {
     const { openId, authKey, ClientName, StaffMobile } = $.userInfo;
 
     const params = JSON.stringify({
-      CookBookID: $.cookBookID1,
-      InteractivType: 4,
+      ArticleID: $.cookBookID1,
+      ReadType: 4,
     });
     body.AuthKey = authKey;
-    body.Method = 'MALLIFCheese.SaveCookBookToFavorite';
+    body.Method = 'MALLIFCheese.SaveArticleToFavorite';
     body.Params = params;
 
     const opts = {
