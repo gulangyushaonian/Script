@@ -541,7 +541,7 @@ function shareTask1() {
     const params = JSON.stringify({
       ArticleID: $.cookBookID1,
       ReadType: 4,
-      PlatFormId:YLCheese_SmallPragram,
+      PlatFormId: "YLCheese_SmallPragram",
     });
     body.AuthKey = authKey;
     body.Method = 'MALLIFCheese.SaveArticleToFavorite';
