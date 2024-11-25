@@ -506,7 +506,7 @@ function recipeTask1() {
       Points: 15,
     });
     body.AuthKey = authKey;
-    body.Method = 'MALLIFCheese.IsHaveAddMemberPoints';
+    body.Method = 'MALLIFCheese.AddMemberPoints1Json';
     body.Params = params;
 
     const opts = {
