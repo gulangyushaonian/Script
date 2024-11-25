@@ -297,7 +297,7 @@ function inRecipe() {
 
         // data = XMLtoJson(data);
 
-        $.log(`阅读食谱`);
+        $.log(`阅读：`);
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -445,8 +445,9 @@ function shareTask() {
         if (!data) return;
 
         data = XMLtoJson(data);
-
+        
         $.shareTaskResult = data;
+        $.log(`分享菜谱`);
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -558,6 +559,7 @@ function shareTask1() {
         data = XMLtoJson(data);
 
         $.shareTaskResult1 = data;
+        $.log(`分享干货`);
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -627,7 +629,7 @@ function showMsg() {
     } else {
       $.desc += `失败 ${$.shareTaskResult.ReturnInfo}`;
     }
-    $.desc = `\n💫浏览干货任务：`;
+    $.desc += `\n💫浏览干货任务：`;
     if ($.recipeTaskResult1.Return >= 0) {
       $.desc += `成功 ${$.recipeTaskResult1.ReturnInfo}`;
     } else {
