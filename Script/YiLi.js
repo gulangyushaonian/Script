@@ -669,6 +669,20 @@ function showMsg() {
       $.desc += `失败 ${$.shareTaskResult.ReturnInfo}`;
     }
 
+    $.desc =+ `📚浏览菜谱任务：`;
+    if ($.recipeTaskResult.Return >= 0) {
+      $.desc += `成功 ${$.recipeTaskResult.ReturnInfo}`;
+    } else {
+      $.desc += `失败 ${$.recipeTaskResult.ReturnInfo}`;
+    }
+
+    $.desc += `\n🕊分享任务：`;
+    if ($.shareTaskResult.Return >= 0) {
+      $.desc += `成功 ${$.shareTaskResult.ReturnInfo}`;
+    } else {
+      $.desc += `失败 ${$.shareTaskResult.ReturnInfo}`;
+    }
+
     $.msg($.name, $.subt, $.desc);
     resolve();
   });
