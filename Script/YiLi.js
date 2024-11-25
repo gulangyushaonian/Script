@@ -541,6 +541,7 @@ function recipeTask1() {
 
     const params = JSON.stringify({
       ActivityCode: 'YLCheese_20230210_ViewDryGoods',
+      ReadType: 4,
       Remark: '浏览干货15秒加分',
       Key: new Date().getTime(),
       Points: 15,
