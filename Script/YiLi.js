@@ -583,7 +583,7 @@ function shareTask1() {
       PlatFormId: "YLCheese_SmallPragram",
     });
     body.AuthKey = authKey;
-    body.Method = 'MALLIFCheese.SaveCookBookToFavorite';
+    body.Method = 'MALLIFCheese.SaveArticleToFavorite';
     body.Params = params;
 
     const opts = {
