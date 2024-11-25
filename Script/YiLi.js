@@ -539,7 +539,8 @@ function shareTask1() {
     const { openId, authKey, ClientName, StaffMobile } = $.userInfo;
 
     const params = JSON.stringify({
-      ArticleID: 394,
+      //ArticleID: 394,
+      ArticleID: $.cookBookID1
       ReadType: 4,
       PlatFormId: "YLCheese_SmallPragram",
       Remark:"",
