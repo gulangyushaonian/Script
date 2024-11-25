@@ -561,7 +561,7 @@ function recipeTask1() {
 
         data = XMLtoJson(data);
 
-        $.recipeTaskResult = data;
+        $.recipeTaskResult1 = data;
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
@@ -598,7 +598,7 @@ function shareTask1() {
 
         data = XMLtoJson(data);
 
-        $.shareTaskResult = data;
+        $.shareTaskResult1 = data;
       } catch (e) {
         $.log(`========${_this.name}=====`);
         $.logErr(e, resp);
