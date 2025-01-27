@@ -7,9 +7,9 @@
 使用声明：⚠️仅供参考，🈲转载与售卖！
 版本说明：小于等于10.27.0
 **************************************
-
+^https?://(api|h5)\.xiuxiu\.meitu\.com/(?!v\d+/(feed|search|channel)/)
 [rewrite_local]
-^https?:\/\/((h5|api)\.xiuxiu|api-sub|api\.posters)\.meitu\.com\/.+\/(vip|user|h\d|center|home) url script-response-body https://raw.githubusercontent.com/chxm1023/Rewrite/main/mtxx.js
+^https?:\/\/((h5|api)\.xiuxiu|api-sub|api\.posters)\.meitu\.com\/.+\/(vip|user|h\d|center|home)(?!\/v\d+\/(feed|search|channel)\/) url script-response-body https://raw.githubusercontent.com/chxm1023/Rewrite/main/mtxx.js
 
 [mitm]
 hostname = *.xiuxiu.meitu.com, api.posters.meitu.com, api-sub.meitu.com
@@ -29,7 +29,6 @@ const sjs = '/user/info_by_entrance.json';
 const sjshf = '/home/home.json';
 const kta = 'https://api.posters.meitu.com/center/user_rights.json';
 const ktb = 'https://api.posters.meitu.com/center/user_rights_consume.json';
-
 
 if ($request.url.indexOf(hysj) != -1){
   chxm1023.data = {
@@ -158,7 +157,7 @@ if ($request.url.indexOf(hymb) != -1){
       "screen_name" : "",
       "in_valid_time" : 4092599349
     };
-chxm1023.data.xx_vip = {
+  chxm1023.data.xx_vip = {
       "id" : "666666666666666666",
       "id_str" : "666666666666666666",
       "valid_time" : 4092599349,
@@ -178,7 +177,7 @@ chxm1023.data.xx_vip = {
       "create_time" : 1666666666,
       "screen_name" : "",
       "in_valid_time" : 4092599349
-   };
+    };
 }
 
 if ($request.url.indexOf(group) != -1){
@@ -230,8 +229,8 @@ if ($request.url.indexOf(sjs) != -1){
       "account_type" : 1,
       "sub_type_name" : "续期",
       "active_sub_order_id" : "666666666666666666",
-    "trial_period_invalid_time" : "4092599349000",
-    "current_order_invalid_time" : "4092599349000",
+      "trial_period_invalid_time" : "4092599349000",
+      "current_order_invalid_time" : "4092599349000",
       "active_order_id" : "666666666666666666",
       "limit_type" : 0,
       "active_sub_type_name" : "续期",
@@ -291,4 +290,33 @@ if ($request.url.indexOf(ktb) != -1){
   };  
 }
 
-$done({body : JSON.stringify(chxm1023)});
+// 统一修改为VIP相关信息
+if (!(
+  $request.url.indexOf(hysj) != -1 ||
+  $request.url.indexOf(hyxx) != -1 ||
+  $request.url.indexOf(user) != -1 ||
+  $request.url.indexOf(hyzl) != -1 ||
+  $request.url.indexOf(hymb) != -1 ||
+  $request.url.indexOf(group) != -1 ||
+  $request.url.indexOf(vip) != -1 ||
+  $request.url.indexOf(sjs) != -1 ||
+  $request.url.indexOf(sjshf) != -1 ||
+  $request.url.indexOf(kta) != -1 ||
+  $request.url.indexOf(ktb) != -1
+)) {
+  if (chxm1023 && chxm1023.data) {
+    chxm1023.data.vip_type = 1;
+    chxm1023.data.expire_days = -9999999999;
+    chxm1023.data.is_expire = 0;
+    chxm1023.data.in_valid_time = 5576488923;
+    chxm1023.data.is_valid_user = 1;
+    chxm1023.data.valid_time = 5576488923;
+    chxm1023.data.home_prompt = "粉钻会员 2100年1月1日到期";
+    chxm1023.data.home_btn_prompt = "已解锁";
+  } else {
+    console.log("chxm1023 or chxm1023.data is undefined");
+  }
+}
+
+$done({body: JSON.stringify(chxm1023)});
+
