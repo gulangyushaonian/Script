@@ -305,18 +305,17 @@ if (!(
   $request.url.indexOf(ktb) != -1
 )) {
   if (chxm1023 && chxm1023.data) {
-    chxm1023.data.vip_type = 1;
-    chxm1023.data.expire_days = -9999999999;
+    chxm1023.data.vip_type = 101;
+    chxm1023.data.expire_days = -66666;
     chxm1023.data.is_expire = 0;
-    chxm1023.data.in_valid_time = 5576488923;
+    chxm1023.data.in_valid_time = 4092599349;
     chxm1023.data.is_valid_user = 1;
-    chxm1023.data.valid_time = 5576488923;
-    chxm1023.data.home_prompt = "粉钻会员 2100年1月1日到期";
-    chxm1023.data.home_btn_prompt = "已解锁";
+    chxm1023.data.valid_time = 4092599349;
+    chxm1023.data.home_prompt = "会员有效期至2099/09/09";
+    chxm1023.data.home_btn_prompt = "立即查看";
   } else {
     console.log("chxm1023 or chxm1023.data is undefined");
   }
 }
 
 $done({body: JSON.stringify(chxm1023)});
-
