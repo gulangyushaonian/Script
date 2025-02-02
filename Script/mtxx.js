@@ -313,6 +313,7 @@ if (!(
     chxm1023.data.valid_time = 4092599349;
     chxm1023.data.home_prompt = "会员有效期至2099/09/09";
     chxm1023.data.home_btn_prompt = "立即查看";
+    chxm1023.data.server_user_type = "vip";
   } else {
     console.log("chxm1023 or chxm1023.data is undefined");
   }
