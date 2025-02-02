@@ -305,7 +305,7 @@ if (!(
   $request.url.indexOf(ktb) != -1
 )) {
   if (chxm1023 && chxm1023.data) {
-    chxm1023.data.vip_type = 101;
+    chxm1023.data.vip_type = 1;
     chxm1023.data.expire_days = -66666;
     chxm1023.data.is_expire = 0;
     chxm1023.data.in_valid_time = 4092599349;
