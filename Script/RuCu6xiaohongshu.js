@@ -119,7 +119,7 @@ if (url.includes("/v1/note/imagefeed") || url.includes("/v2/note/feed")) {
     // 白名单
     obj.data.items = obj.data.items.filter((i) => i?.recommend_reason === "friend_post");
   }
-} else if (url.includes("/v3/note/videofeed")) {
+} else if (url.includes("/v\\d+/note/videofeed")) {
   // 信息流 视频
   if (obj?.data?.length > 0) {
     for (let item of obj.data) {
