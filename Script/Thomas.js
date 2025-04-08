@@ -36,10 +36,21 @@ const origin = 'https://apis.folidaymall.com';
 
 // ---------------------- 一般不动变量区域 ----------------------
 const Notify = 1;  // 0 为关闭通知, 1 为打开通知, 默认为 1
-let cookie = '', cookiesArr = [], userIdx = 0;  // Cookie 数据
+let cookiesArr = [], userIdx = 0;  // 存储多个账号的 Cookie 数据
 $.notifyMsg = [];  // 为通知准备的空数组
 $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';  // 调试模式
 
+// ---------------------- 自定义变量区域 ----------------------
+
+// 获取多个 Cookie
+const getCookies = () => {
+  const cookies = $.getdata(ck_key);  // 获取存储的 Cookie 数据
+  if (cookies) {
+    cookiesArr = cookies.split(';');  // 假设多个账号的 Cookie 用分号隔开
+  }
+};
+
+// 每个账
 // ---------------------- 自定义变量区域 ----------------------
 
 
@@ -80,33 +91,52 @@ function GetCookie() {
 }
 
 // 脚本入口函数
+// 每个账号的任务
+const executeTaskForAccount = async (accountIdx) => {
+  $.cookie = cookiesArr[accountIdx];  // 设置当前账号的 Cookie
+  $.index = accountIdx + 1;  // 设置账号索引
+  $.activityTaskId = '';
+  $.activityTaskRelationId = '';
+  $.taskContentNum = 0;
+  $.notCompleted = true;
+
+  console.log(`\n账号 ${$.index} 开始执行\n`);
+
+  // 每日签到
+  await signin();
+  
+  // 获取任务列表
+  await relationList();
+  
+  // 如果任务id不存在或已完成，则跳过该用户
+  if (!$.activityTaskId || !$.notCompleted) return;
+
+  // 领取任务
+  await toTask(Api.task);
+
+  // 等待任务
+  await $.wait(1000 * $.taskContentNum);
+
+  // 提交任务
+  await toTask(Api.submit);
+
+  // 再次获取任务列表
+  await relationList();
+  
+  // 领取奖励
+  await toTask(Api.rewards);
+};
+
+// 主函数
 async function main() {
-  for (let cookieItem of cookiesArr) {
-    cookie = cookieItem;
-    $.index = ++userIdx;
-    $.activityTaskId = '';
-    $.activityTaskRelationId = '';
-    $.taskContentNum = 0;
-    $.notCompleted = true;
-    console.log(`\n账号 ${$.index} 开始执行\n`);
-    // 每日签到
-    await signin();
-    // 获取任务列表
-    await relationList();
-    // 如果任务id不存在或已完成，则跳过该用户
-    if (!$.activityTaskId || !$.notCompleted) continue;
-    // 领取任务
-    await toTask(Api.task);
-    // 等待任务
-    await $.wait(1000 * $.taskContentNum);
-    // 提交任务
-    await toTask(Api.submit);
-    // 再次获取任务列表
-    await relationList();
-    // 领取奖励
-    await toTask(Api.rewards);
+  getCookies();  // 获取所有账号的 Cookie
+  
+  for (let i = 0; i < cookiesArr.length; i++) {
+    await executeTaskForAccount(i);  // 针对每个账号执行任务
   }
 }
+
+main();  // 启动脚本
 
 // 每日签到
 async function signin() {
