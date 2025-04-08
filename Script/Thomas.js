@@ -37,11 +37,12 @@ const origin = 'https://apis.folidaymall.com';
 
 // ---------------------- 一般不动变量区域 ----------------------
 const Notify = 1;  // 0 为关闭通知, 1 为打开通知, 默认为 1
-let cookiesArr = [], userIdx = 0;  // 存储多个账号的 Cookie 数据
+let cookie = '', cookiesArr = [], userIdx = 0;  // Cookie 数据
 $.notifyMsg = [];  // 为通知准备的空数组
 $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';  // 调试模式
 
 // ---------------------- 自定义变量区域 ----------------------
+
 
 // 统一管理 api 接口
 const Api = {
@@ -79,11 +80,49 @@ function GetCookie() {
   }
 }
 
-// 获取多个 Cookie
-function getCookies() {
-  const cookies = $.getdata(ck_key);  // 获取存储的 Cookie 数据
-  if (cookies) {
-    cookiesArr = cookies.split(';');  // 假设多个账号的 Cookie 用分号隔开
+// 脚本入口函数
+async function main() {
+  // 读取存储的 Cookie 数据（多个账号支持）
+  cookiesArr = JSON.parse($.getdata('ThomasCook_Cookie')) || [];
+  
+  if (cookiesArr.length === 0) {
+    console.log('未配置 Cookie，请添加 Cookie 数据');
+    return;
+  }
+
+  // 遍历每个账号进行操作
+  for (let cookieItem of cookiesArr) {
+    cookie = cookieItem;
+    $.index = ++userIdx;
+    $.activityTaskId = '';
+    $.activityTaskRelationId = '';
+    $.taskContentNum = 0;
+    $.notCompleted = true;
+    console.log(`\n账号 ${$.index} 开始执行\n`);
+    
+    // 每日签到
+    await signin();
+    
+    // 获取任务列表
+    await relationList();
+    
+    // 如果任务id不存在或已完成，则跳过该用户
+    if (!$.activityTaskId || !$.notCompleted) continue;
+    
+    // 领取任务
+    await toTask(Api.task);
+    
+    // 等待任务
+    await $.wait(1000 * $.taskContentNum);
+    
+    // 提交任务
+    await toTask(Api.submit);
+    
+    // 再次获取任务列表
+    await relationList();
+    
+    // 领取奖励
+    await toTask(Api.rewards);
   }
 }
 
@@ -106,6 +145,7 @@ async function signin() {
     } else {
       $.signInStatus = "❌ 签到失败";
       text = $.signInStatus;
+      console.log(data);
     }
     $.notifyMsg.push(text);
     console.log(`每日签到: ${$.signInStatus}`);
@@ -121,13 +161,13 @@ async function relationList() {
     debug(result);
     let taskList = result.data.activityTaskRelations;
     for (const item of taskList) {
-      const { activityTaskId, activityTaskRelationId, activityTaskName, activityTaskDesc, taskProcessStatus, taskContentNum, taskRewardValue, taskRewardTypeName } = item;
+      const { activityTaskId, activityTaskRelationId, activityTaskName, activityTaskType, activityTaskDesc, taskProcessStatus, activityTaskSort, taskContentNum, taskRewardType, taskRewardTypeName, taskRewardValue, taskJumpAddressType, taskJumpAddressDesc, taskEventButton, taskFinishNum, successRewardDesc } = item;
       if (taskRewardTypeName == "积分") {
         $.activityTaskId = activityTaskId;
         $.taskName = activityTaskName;
         if (taskProcessStatus == "NOT_COMPLETED") {
           $.taskContentNum = taskContentNum;
-          console.log(`活动名称: ${activityTaskName}\n活动说明: ${taskDesc}\n活动奖励: ${taskRewardValue} ${taskRewardTypeName}`);
+          console.log(`活动名称: ${activityTaskName}\n活动说明: ${activityTaskDesc}\n活动奖励: ${taskRewardValue} ${taskRewardTypeName}`);
         } else {
           $.notCompleted = false;
           $.activityTaskRelationId = activityTaskRelationId;
@@ -156,38 +196,6 @@ async function toTask(obj) {
   }
 }
 
-// 脚本入口函数
-async function main() {
-  getCookies();  // 获取所有账号的 Cookie
-  
-  for (let i = 0; i < cookiesArr.length; i++) {
-    $.cookie = cookiesArr[i];  // 设置当前账号的 cookie
-    $.index = i + 1;  // 设置账号索引
-    $.activityTaskId = '';
-    $.activityTaskRelationId = '';
-    $.taskContentNum = 0;
-    $.notCompleted = true;
-
-    console.log(`\n账号 ${$.index} 开始执行\n`);
-    // 每日签到
-    await signin();
-    // 获取任务列表
-    await relationList();
-    // 如果任务id不存在或已完成，则跳过该用户
-    if (!$.activityTaskId || !$.notCompleted) continue;
-    // 领取任务
-    await toTask(Api.task);
-    // 等待任务
-    await $.wait(1000 * $.taskContentNum);
-    // 提交任务
-    await toTask(Api.submit);
-    // 再次获取任务列表
-    await relationList();
-    // 领取奖励
-    await toTask(Api.rewards);
-  }
-}
-
 // 主执行程序
 !(async () => {
   // 获取 Cookie
@@ -205,8 +213,6 @@ async function main() {
     await sendMsg($.notifyMsg.join('\n'));  // 推送通知
     $.done();
   })
-
-
 // ---------------------- 辅助函数区域 ----------------------
 // 封装请求参数
 function options(url, body = '') {
