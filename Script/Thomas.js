@@ -30,6 +30,7 @@ hostname = apis.folidaymall.com
 ====================================================================================================
 */
 
+
 const $ = new Env('复游会');
 const ck_key = 'ThomasCook_Cookie';
 const origin = 'https://apis.folidaymall.com';
@@ -41,18 +42,6 @@ $.notifyMsg = [];  // 为通知准备的空数组
 $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';  // 调试模式
 
 // ---------------------- 自定义变量区域 ----------------------
-
-// 获取多个 Cookie
-const getCookies = () => {
-  const cookies = $.getdata(ck_key);  // 获取存储的 Cookie 数据
-  if (cookies) {
-    cookiesArr = cookies.split(';');  // 假设多个账号的 Cookie 用分号隔开
-  }
-};
-
-// 每个账
-// ---------------------- 自定义变量区域 ----------------------
-
 
 // 统一管理 api 接口
 const Api = {
@@ -90,53 +79,13 @@ function GetCookie() {
   }
 }
 
-// 脚本入口函数
-// 每个账号的任务
-const executeTaskForAccount = async (accountIdx) => {
-  $.cookie = cookiesArr[accountIdx];  // 设置当前账号的 Cookie
-  $.index = accountIdx + 1;  // 设置账号索引
-  $.activityTaskId = '';
-  $.activityTaskRelationId = '';
-  $.taskContentNum = 0;
-  $.notCompleted = true;
-
-  console.log(`\n账号 ${$.index} 开始执行\n`);
-
-  // 每日签到
-  await signin();
-  
-  // 获取任务列表
-  await relationList();
-  
-  // 如果任务id不存在或已完成，则跳过该用户
-  if (!$.activityTaskId || !$.notCompleted) return;
-
-  // 领取任务
-  await toTask(Api.task);
-
-  // 等待任务
-  await $.wait(1000 * $.taskContentNum);
-
-  // 提交任务
-  await toTask(Api.submit);
-
-  // 再次获取任务列表
-  await relationList();
-  
-  // 领取奖励
-  await toTask(Api.rewards);
-};
-
-// 主函数
-async function main() {
-  getCookies();  // 获取所有账号的 Cookie
-  
-  for (let i = 0; i < cookiesArr.length; i++) {
-    await executeTaskForAccount(i);  // 针对每个账号执行任务
+// 获取多个 Cookie
+function getCookies() {
+  const cookies = $.getdata(ck_key);  // 获取存储的 Cookie 数据
+  if (cookies) {
+    cookiesArr = cookies.split(';');  // 假设多个账号的 Cookie 用分号隔开
   }
 }
-
-main();  // 启动脚本
 
 // 每日签到
 async function signin() {
@@ -146,7 +95,6 @@ async function signin() {
     let text = '';
     if (result?.responseCode === '0') {
       $.mobile = result.data.signInfo.mobile;  // 手机号
-      // $.accountId = result.data.signInfo.accountId;  // 用户ID
       $.signInStatus = result.data.signInfo.signInStatus === 1 ? '🎉 签到成功' : "❌ 签到失败";  // 签到状态：1=是 0=否
       $.changeIntegeral = result.data.signInfo.changeIntegeral;  // 积分变动
       $.continousSignDays = result.data.signInfo.continousSignDays;  // 连续签到天数
@@ -158,7 +106,6 @@ async function signin() {
     } else {
       $.signInStatus = "❌ 签到失败";
       text = $.signInStatus;
-      console.log(data);
     }
     $.notifyMsg.push(text);
     console.log(`每日签到: ${$.signInStatus}`);
@@ -174,13 +121,13 @@ async function relationList() {
     debug(result);
     let taskList = result.data.activityTaskRelations;
     for (const item of taskList) {
-      const { activityTaskId, activityTaskRelationId, activityTaskName, activityTaskType, activityTaskDesc, taskProcessStatus, activityTaskSort, taskContentNum, taskRewardType, taskRewardTypeName, taskRewardValue, taskJumpAddressType, taskJumpAddressDesc, taskEventButton, taskFinishNum, successRewardDesc } = item;
+      const { activityTaskId, activityTaskRelationId, activityTaskName, activityTaskDesc, taskProcessStatus, taskContentNum, taskRewardValue, taskRewardTypeName } = item;
       if (taskRewardTypeName == "积分") {
         $.activityTaskId = activityTaskId;
         $.taskName = activityTaskName;
         if (taskProcessStatus == "NOT_COMPLETED") {
           $.taskContentNum = taskContentNum;
-          console.log(`活动名称: ${activityTaskName}\n活动说明: ${activityTaskDesc}\n活动奖励: ${taskRewardValue} ${taskRewardTypeName}`);
+          console.log(`活动名称: ${activityTaskName}\n活动说明: ${taskDesc}\n活动奖励: ${taskRewardValue} ${taskRewardTypeName}`);
         } else {
           $.notCompleted = false;
           $.activityTaskRelationId = activityTaskRelationId;
@@ -188,12 +135,10 @@ async function relationList() {
         }
         break;
       }
-      // console.log(item);
     }
   } catch (e) {
     console.log(e);
   }
-
 }
 
 // 执行任务
@@ -208,6 +153,38 @@ async function toTask(obj) {
     }
   } catch (e) {
     console.log(e);
+  }
+}
+
+// 脚本入口函数
+async function main() {
+  getCookies();  // 获取所有账号的 Cookie
+  
+  for (let i = 0; i < cookiesArr.length; i++) {
+    $.cookie = cookiesArr[i];  // 设置当前账号的 cookie
+    $.index = i + 1;  // 设置账号索引
+    $.activityTaskId = '';
+    $.activityTaskRelationId = '';
+    $.taskContentNum = 0;
+    $.notCompleted = true;
+
+    console.log(`\n账号 ${$.index} 开始执行\n`);
+    // 每日签到
+    await signin();
+    // 获取任务列表
+    await relationList();
+    // 如果任务id不存在或已完成，则跳过该用户
+    if (!$.activityTaskId || !$.notCompleted) continue;
+    // 领取任务
+    await toTask(Api.task);
+    // 等待任务
+    await $.wait(1000 * $.taskContentNum);
+    // 提交任务
+    await toTask(Api.submit);
+    // 再次获取任务列表
+    await relationList();
+    // 领取奖励
+    await toTask(Api.rewards);
   }
 }
 
