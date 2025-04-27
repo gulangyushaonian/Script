@@ -4,19 +4,19 @@
 set -e
 
 echo 'Updating package lists... | 正在更新软件包列表...'
-sudo yum makecache
+sudo apt-get update
 
 echo 'Installing Git... | 正在安装Git...'
-sudo yum install -y git
+sudo apt-get install -y git
 
 echo 'Installing Python3... | 正在安装Python3...'
-sudo yum install -y python3
+sudo apt install -y python3
 
 echo 'Installing PIP3... | 正在安装PIP3...'
-sudo yum install -y python3-pip
+sudo apt install -y python3-pip
 
 echo 'Installing python3-venv... | 正在安装python3-venv...'
-sudo yum install -y python3-venv
+sudo apt install -y python3-venv
 
 echo 'Creating path: /www/wwwroot | 正在创建路径: /www/wwwroot'
 sudo mkdir -p /www/wwwroot
@@ -39,6 +39,8 @@ pip config set global.index-url https://pypi.org/simple/
 
 echo 'Installing pip setuptools | 安装pip setuptools'
 pip install setuptools
+pip install wheel
+pip install --upgrade setuptools
 
 echo 'Installing dependencies from requirements.txt | 从requirements.txt安装依赖'
 pip install -r requirements.txt
