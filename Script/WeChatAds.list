@@ -2,6 +2,3 @@
 HOST,wxa.wxs.qq.com,REJECT
 HOST,wximg.wxs.qq.com,REJECT
 HOST,wxsmw.wxs.qq.com,REJECT
-
-
-hostname = wxa.wxs.qq.com,wximg.wxs.qq.com,wxsmw.wxs.qq.com
