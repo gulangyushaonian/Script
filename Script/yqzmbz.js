@@ -5,7 +5,7 @@ var objc = JSON.parse($response.body);
     "user_type" : 0,
     "following_count" : 0,
     "works_mobile_download_cnt" : 0,
-    "nickname" : "彭于晏crack",
+    "nickname" : "鼓浪屿少年",
     "wx_openid" : "",
     "is_real_name_auth" : 0,
     "open_id" : "1624225033495252992",
