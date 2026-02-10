@@ -173,11 +173,12 @@ hostname = *.amap.com
 //     })
 
 
-
 /*
-高德打车签到 (多账号增强版)
-功能：支持多账号自动获取、自动去重、顺序签到
-获取方式：QX开启重写，切换不同账号进入【福利中心】，脚本会自动累加账号。
+高德打车签到 (多账号增强修复版)
+修改点：
+1. 增加运行前强制去重，防止 1、3 账号重复执行。
+2. 修复全局变量污染。
+3. 优化日志输出。
 */
 
 const $ = new Env("高德地图签到");
@@ -185,22 +186,30 @@ const _key = 'GD_Val';
 $.is_debug = 'false';
 $.messages = [];
 
-// 【核心修改：初始化多账号列表】
+// 【获取并去重账号列表】
 let ckRaw = $.getdata(_key) || $.getval(_key);
 let ckList = [];
 if (ckRaw) {
     try {
         let parsed = JSON.parse(ckRaw);
-        ckList = Array.isArray(parsed) ? parsed : [parsed];
+        let rawArray = Array.isArray(parsed) ? parsed : [parsed];
+        // 运行前强制去重：根据 userId 唯一性过滤
+        const map = new Map();
+        for (const item of rawArray) {
+            if (item.userId && !map.has(item.userId)) {
+                map.set(item.userId, item);
+            }
+        }
+        ckList = Array.from(map.values());
     } catch (e) {
-        $.log("⚠️ 现有数据格式非JSON，已重置");
+        $.log("⚠️ 账号解析失败");
     }
 }
 
 async function main() {
     intRSA(), intCryptoJS();
     const list = [
-        {"name": "APP端", "node": "Amap", "channel": "amap", "actID": "5DRBxfzndQq", "playID": "5DRBxfFiaXN"}
+        {"name": "APP端", "node": "Amap", "channel": "amap", "actID": "5DRBxfndQq", "playID": "5DRBxfFiaXN"}
     ];
     for (const index of list) {
         if (await checkIn(index)) {
@@ -226,24 +235,13 @@ function getReq(l) {
         "bizVersion": "080700",
         "h5version": "8.87.10",
         "platform": "ios",
-        "tid": $.adiu,
-        "adiu": $.adiu,
-        "diu": $.adiu,
-        "imei": $.adiu,
-        "idfa": $.adiu,
-        "enterprise": "0",
-        "ts": new Date().getTime(),
-        "uid": $.userId,
-        "userId": $.userId,
-        "channel": l.channel,
-        "dip": "20020",
-        "adCode": "",
-        "actID": l.actID,
-        "node": l.node,
-        "sign": l.sign
+        "tid": $.adiu, "adiu": $.adiu, "diu": $.adiu, "imei": $.adiu, "idfa": $.adiu,
+        "enterprise": "0", "ts": new Date().getTime(),
+        "uid": $.userId, "userId": $.userId,
+        "channel": l.channel, "dip": "20020", "adCode": "", "actID": l.actID, "node": l.node, "sign": l.sign
     };
     body = 'in=' + encodeURIComponent(Encrypt_Body(Json2Form(body), l.key));
-    headers = {
+    let headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 amap/12.13.1.2034 AliApp(amap/12.13.1.2034) NetType/WiFi',
         'sessionid': $.sessionid
@@ -254,10 +252,11 @@ function getReq(l) {
 async function checkIn(list) {
     list.addbody = {"playTypes": "dailySign", "playIDs": list.playID};
     list.url = 'https://m5.amap.com/ws/car-place/show?'
-    const {code, data, message} = await httpRequest(getReq(list));
-    if (code == '1') {
+    const res = await httpRequest(getReq(list));
+    if (res && res.code == '1') {
+        const data = res.data;
         if (!data.actID) {
-            pushMsg(`${list.name}->查询:请到福利中心查看活动是否存在`);
+            pushMsg(`${list.name}->查询: 账号[${$.userId}]未发现活动`);
             return false;
         }
         const today = $.time('MM月dd日')
@@ -268,8 +267,9 @@ async function checkIn(list) {
             return true;
         }
     } else {
-        pushMsg(`${list.name}->查询:${message}`)
+        pushMsg(`${list.name}->查询: ${res?.message || '未知错误'}`)
     }
+    return false;
 }
 
 async function signIn(list) {
@@ -279,25 +279,23 @@ async function signIn(list) {
     pushMsg(`${list.name}->签到: ${code === '1' ? '签到成功' : message}`)
 }
 
-// 【核心修改：支持多账号自动保存与去重】
+// 【自动捕获CK并去重保存】
 function getToken() {
     if (!$request || $request.method === 'OPTIONS') return;
-    let abc = {}, mark = '';
+    let abc = {};
     if (/\/common\/(alipaymini|wxmini)\?_ENCRYPT=/.test($request.url)) {
         let encryptedData = $request.url.split("_ENCRYPT=")[1].split("&")[0];
         let decodedData = base64decode(encryptedData);
         decodedData.split('&').forEach(item => {let [key, value] = item.split('=');abc[key] = value;});
         abc.adiu = abc.deviceId;
         abc.sessionid = abc.sessionId;
-        mark = '小程序';
     } else if ($response && $response.body) {
         try {
-            let responseData = $.toObj($response.body);
+            let responseData = JSON.parse($response.body);
             abc.userId = responseData.content.uid;
             abc.adiu = responseData.content.adiu;
             let headers = ObjectKeys2LowerCase($request.headers);
             abc.sessionid = headers['sessionid'] || headers['cookie']?.split("sessionid=")[1]?.split(";")[0];
-            mark = 'Cookie';
         } catch(e) { return; }
     }
 
@@ -306,23 +304,20 @@ function getToken() {
         let savedData = $.getdata(_key) || $.getval(_key);
         if (savedData) {
             try {
-                let parsed = JSON.parse(savedData);
-                currentList = Array.isArray(parsed) ? parsed : [parsed];
+                currentList = JSON.parse(savedData);
+                if (!Array.isArray(currentList)) currentList = [currentList];
             } catch (e) { currentList = []; }
         }
-        
-        // 去重：剔除 userId 相同的旧数据，添加新数据
+        // 去重保存
         currentList = currentList.filter(item => item.userId !== abc.userId);
         currentList.push(abc);
-        
-        const success = $.setdata(JSON.stringify(currentList), _key) || $.setval(JSON.stringify(currentList), _key);
-        if (success) {
-            $.msg($.name, `账号 [${abc.userId}] 获取成功🎉`, `当前共计 ${currentList.length} 个账号\n切换账号进入福利中心可继续添加`);
+        if ($.setdata(JSON.stringify(currentList), _key) || $.setval(JSON.stringify(currentList), _key)) {
+            $.msg($.name, `账号 [${abc.userId}] 捕获成功`, `当前共 ${currentList.length} 个账号`);
         }
     }
 }
 
-// 【核心修改：执行流程循环化】
+// 【主流程：带强制去重的遍历】
 !(async () => {
     if(typeof $request !== `undefined`){
         getToken();
@@ -330,27 +325,24 @@ function getToken() {
     }
 
     if (ckList.length === 0) {
-        sendMsg('❌未找到有效的账号，请先进入福利中心获取');
+        $.log('❌ 未找到账号，请先进入福利中心获取');
         return;
     }
 
-    $.log(`\n🔔 发现 ${ckList.length} 个账号，开始顺序执行任务...\n`);
+    $.log(`\n🔔 检测到 ${ckList.length} 个有效账号 (已自动过滤重复)\n`);
     for (let i = 0; i < ckList.length; i++) {
         let ck = ckList[i];
+        // 重置并注入当前账号全局变量
         $.userId = ck.userId;
         $.sessionid = ck.sessionid;
         $.adiu = ck.adiu;
         
-        $.log(`────── [账号 ${i + 1}] ID: ${$.userId} ──────`);
+        $.log(`────── [账号 ${i + 1}/${ckList.length}] ID: ${$.userId} ──────`);
         await main();
         await $.wait(2000); 
     }
 
-})().catch((e) => $.logErr(e))
-    .finally(async () => {
-        if ($.messages.length > 0) await sendMsg($.messages.join('\n'));
-        $.done();
-    })
+})().catch((e) => $.logErr(e)).finally(() => $.done());
 
 // 如下原始参数
 //
