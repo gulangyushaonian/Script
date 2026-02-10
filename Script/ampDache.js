@@ -176,9 +176,9 @@ hostname = *.amap.com
 /*
 高德打车签到 (多账号增强修复版)
 修改点：
-1. 增加运行前强制去重，防止 1、3 账号重复执行。
-2. 修复全局变量污染。
-3. 优化日志输出。
+1. 修复重复账号：运行前强制过滤重复的 userId。
+2. 修复提示逻辑：保留并正确显示“已经签过了”的提示。
+3. 自动追加：进入福利中心自动增加新账号，不覆盖旧账号。
 */
 
 const $ = new Env("高德地图签到");
@@ -186,23 +186,23 @@ const _key = 'GD_Val';
 $.is_debug = 'false';
 $.messages = [];
 
-// 【获取并去重账号列表】
+// 【1. 获取并去重账号列表】
 let ckRaw = $.getdata(_key) || $.getval(_key);
 let ckList = [];
 if (ckRaw) {
     try {
         let parsed = JSON.parse(ckRaw);
         let rawArray = Array.isArray(parsed) ? parsed : [parsed];
-        // 运行前强制去重：根据 userId 唯一性过滤
+        // 运行前强制去重：使用 Map 保证 userId 唯一
         const map = new Map();
         for (const item of rawArray) {
-            if (item.userId && !map.has(item.userId)) {
+            if (item && item.userId) {
                 map.set(item.userId, item);
             }
         }
         ckList = Array.from(map.values());
     } catch (e) {
-        $.log("⚠️ 账号解析失败");
+        $.log("⚠️ 账号数据解析异常");
     }
 }
 
@@ -212,8 +212,13 @@ async function main() {
         {"name": "APP端", "node": "Amap", "channel": "amap", "actID": "5DRBxfndQq", "playID": "5DRBxfFiaXN"}
     ];
     for (const index of list) {
-        if (await checkIn(index)) {
-            await signIn(index)
+        // 执行检查
+        const checkResult = await checkIn(index);
+        if (checkResult === "NEED_SIGN") {
+            // 需要签到
+            await signIn(index);
+        } else if (checkResult === "ALREADY_SIGNED") {
+            // 已经签过，无需操作，提示已在 checkIn 中完成
         }
     }
 }
@@ -232,9 +237,7 @@ function getReq(l) {
     const url = l.url + getQuery(l);
     let body = {
         ...l.addbody,
-        "bizVersion": "080700",
-        "h5version": "8.87.10",
-        "platform": "ios",
+        "bizVersion": "080700", "h5version": "8.87.10", "platform": "ios",
         "tid": $.adiu, "adiu": $.adiu, "diu": $.adiu, "imei": $.adiu, "idfa": $.adiu,
         "enterprise": "0", "ts": new Date().getTime(),
         "uid": $.userId, "userId": $.userId,
@@ -251,23 +254,27 @@ function getReq(l) {
 
 async function checkIn(list) {
     list.addbody = {"playTypes": "dailySign", "playIDs": list.playID};
-    list.url = 'https://m5.amap.com/ws/car-place/show?'
+    list.url = 'https://m5.amap.com/ws/car-place/show?';
     const res = await httpRequest(getReq(list));
     if (res && res.code == '1') {
         const data = res.data;
         if (!data.actID) {
-            pushMsg(`${list.name}->查询: 账号[${$.userId}]未发现活动`);
+            pushMsg(`${list.name}->查询: 账号[${$.userId}]未发现活动内容`);
             return false;
         }
-        const today = $.time('MM月dd日')
+        const today = $.time('MM月dd日');
         let foundItem = data?.playMap?.dailySign?.signList?.find(t => t?.date === today);
         if (foundItem) {
+            if (foundItem.status === 1 || foundItem.status === "1") {
+                pushMsg(`${list.name}->状态: 今日已签过`);
+                return "ALREADY_SIGNED";
+            }
             $.signTerm = data?.playMap?.dailySign?.signTerm;
             $.signDay = foundItem.day;
-            return true;
+            return "NEED_SIGN";
         }
     } else {
-        pushMsg(`${list.name}->查询: ${res?.message || '未知错误'}`)
+        pushMsg(`${list.name}->错误: ${res?.message || '请求失败'}`);
     }
     return false;
 }
@@ -276,10 +283,10 @@ async function signIn(list) {
     list.addbody = {playID: list.playID, signTerm: $.signTerm, signType: "1", signDay: $.signDay, div: ""};
     list.url = 'https://m5.amap.com/ws/alice/activity/daily_sign/do_sign?';
     const {code, message} = await httpRequest(getReq(list));
-    pushMsg(`${list.name}->签到: ${code === '1' ? '签到成功' : message}`)
+    pushMsg(`${list.name}->签到: ${code === '1' ? '签到成功' : message}`);
 }
 
-// 【自动捕获CK并去重保存】
+// 【2. 自动捕获逻辑：带覆盖更新的去重追加】
 function getToken() {
     if (!$request || $request.method === 'OPTIONS') return;
     let abc = {};
@@ -287,8 +294,7 @@ function getToken() {
         let encryptedData = $request.url.split("_ENCRYPT=")[1].split("&")[0];
         let decodedData = base64decode(encryptedData);
         decodedData.split('&').forEach(item => {let [key, value] = item.split('=');abc[key] = value;});
-        abc.adiu = abc.deviceId;
-        abc.sessionid = abc.sessionId;
+        abc.adiu = abc.deviceId; abc.sessionid = abc.sessionId;
     } else if ($response && $response.body) {
         try {
             let responseData = JSON.parse($response.body);
@@ -303,21 +309,18 @@ function getToken() {
         let currentList = [];
         let savedData = $.getdata(_key) || $.getval(_key);
         if (savedData) {
-            try {
-                currentList = JSON.parse(savedData);
-                if (!Array.isArray(currentList)) currentList = [currentList];
-            } catch (e) { currentList = []; }
+            try { currentList = JSON.parse(savedData); if (!Array.isArray(currentList)) currentList = [currentList]; } catch (e) { currentList = []; }
         }
-        // 去重保存
+        // 去重：如果 userId 存在，更新它；否则追加
         currentList = currentList.filter(item => item.userId !== abc.userId);
         currentList.push(abc);
         if ($.setdata(JSON.stringify(currentList), _key) || $.setval(JSON.stringify(currentList), _key)) {
-            $.msg($.name, `账号 [${abc.userId}] 捕获成功`, `当前共 ${currentList.length} 个账号`);
+            $.msg($.name, `账号 [${abc.userId}] 获取成功`, `当前共计 ${currentList.length} 个账号`);
         }
     }
 }
 
-// 【主流程：带强制去重的遍历】
+// 【3. 主执行逻辑：顺序遍历】
 !(async () => {
     if(typeof $request !== `undefined`){
         getToken();
@@ -325,21 +328,20 @@ function getToken() {
     }
 
     if (ckList.length === 0) {
-        $.log('❌ 未找到账号，请先进入福利中心获取');
+        $.log('❌ 请先进入福利中心获取 CK');
         return;
     }
 
-    $.log(`\n🔔 检测到 ${ckList.length} 个有效账号 (已自动过滤重复)\n`);
+    $.log(`\n🔔 准备执行 ${ckList.length} 个账号的签到任务 (已过滤重复)\n`);
     for (let i = 0; i < ckList.length; i++) {
         let ck = ckList[i];
-        // 重置并注入当前账号全局变量
         $.userId = ck.userId;
         $.sessionid = ck.sessionid;
         $.adiu = ck.adiu;
         
         $.log(`────── [账号 ${i + 1}/${ckList.length}] ID: ${$.userId} ──────`);
         await main();
-        await $.wait(2000); 
+        await $.wait(1500); 
     }
 
 })().catch((e) => $.logErr(e)).finally(() => $.done());
