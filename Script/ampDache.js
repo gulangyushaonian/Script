@@ -181,6 +181,17 @@ hostname = *.amap.com
 
 const $ = new Env("高德地图签到");
 const _key = 'GD_Val';
+
+// 【清理开关】想清空时改为 true，清完改回 false
+const RESET_CK = true; 
+
+if (RESET_CK) {
+    $.setdata("", _key); 
+    $.setval("", _key);
+    $.msg($.name, "🧹 缓存已清空", "本地抓取的CK已全部删除\n请重新进入福利中心获取");
+    $.done(); // 停止后续执行
+}
+
 $.is_debug = 'false';
 $.messages = [];
 
