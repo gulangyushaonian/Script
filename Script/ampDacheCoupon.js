@@ -45,7 +45,7 @@ var message1 = ''; // 用于收集所有账号的通知内容
     }
 
     console.log(`\n🔔 检测到 ${userList.length} 个账号，开始轮询...`);
-    message1 = `找到 ${userList.length} 个账号`;
+    message1 = `找到 ${userList.length} 个账号:`;
 
     intRSA();
     intCryptoJS();
