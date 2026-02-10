@@ -183,7 +183,7 @@ const $ = new Env("高德地图签到");
 const _key = 'GD_Val';
 
 // 【清理开关】想清空时改为 true，清完改回 false
-const RESET_CK = true; 
+const RESET_CK = false; 
 
 if (RESET_CK) {
     $.setdata("", _key); 
