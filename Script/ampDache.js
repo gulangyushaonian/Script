@@ -92,6 +92,7 @@ async function main() {
 
     for (let i = 0; i < ckList.length; i++) {
         const ck = ckList[i];
+        await grabCoupon(ck);
 
         $.log(`\n========== 🚕 账号 ${i + 1} 开始 ==========`);
 
