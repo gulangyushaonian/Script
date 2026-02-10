@@ -230,13 +230,13 @@ function getToken() {
         getToken();
         return;
     }
-    if (!ckobj || !ckobj.sessionid || ckobj.sessionid.length < 30) {
+    if (!ck || !ck.sessionid || ck.sessionid.length < 30) {
         sendMsg('❌请先获取sessionid🎉')
         return;
     }
-    $.userId = ckobj.userId;
-    $.sessionid = ckobj.sessionid;
-    $.adiu = ckobj.adiu;
+    $.userId = ck.userId;
+    $.sessionid = ck.sessionid;
+    $.adiu = ck.adiu;
     await main();
 })().catch((e) => $.messages.push(e.message || e) && $.logErr(e))
     .finally(async () => {
