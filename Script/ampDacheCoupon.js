@@ -18,17 +18,16 @@ Cookie获取/签到用这个脚本：https://raw.githubusercontent.com/wf021325/
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 /*
 /*
-高德抢券 - 完整多账号轮询版
-1. 适配 getToken 的数组存储格式：[{"userId":"...","sessionid":"..."}, ...]
-2. 每个账号固定抢券 10 次。
-3. 自动跳过失效或格式错误的账号。
+高德抢券 - 多账号通知增强版
+1. 适配数组存储格式，支持多账号轮询
+2. 每个账号固定抢 10 次
+3. 自动汇总结果并发送通知
 */
 
 const $ = new Env("高德抢券");
 const _key = 'GD_Val';
-// 获取环境变量或持久化数据
 let gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
-$.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';
+var message1 = ''; // 用于收集所有账号的通知内容
 
 !(async () => {
     if (!gdVal) {
@@ -38,87 +37,83 @@ $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'fal
 
     let userList = [];
     try {
-        // 解析 getToken 存入的数组
         let parsedData = JSON.parse(gdVal);
         userList = Array.isArray(parsedData) ? parsedData : [parsedData];
     } catch (e) {
-        console.log("❌ GD_Val 解析失败，请确认是否为标准 JSON 格式");
+        console.log("❌ GD_Val 解析失败");
         return;
     }
 
-    console.log(`\n🔔 检测到共计 ${userList.length} 个账号，准备开始轮询...`);
+    console.log(`\n🔔 检测到 ${userList.length} 个账号，开始轮询...`);
+    message1 = `找到 ${userList.length} 个账号\n`;
 
-    // 初始化加密组件
     intRSA();
     intCryptoJS();
     indMD5();
 
     for (let i = 0; i < userList.length; i++) {
         let account = userList[i];
-        
-        // --- 核心变量同步：确保每个请求都使用当前循环账号的数据 ---
-        userId = account.userId || "";
+        userId = account.userId || "未知";
         adiu = account.adiu || ""; 
         sessionid = account.sessionid || "";
 
-        console.log(`\n>>>>>> [账号 ${i + 1}] ID: ${userId} <<<<<<`);
-
-        // 验证 sessionid 是否存在
+        let accountTitle = `\n【账号 ${i + 1}】ID: ${userId}`;
+        console.log(accountTitle);
+        
         if (!sessionid || sessionid.length < 20) {
-            console.log(`⚠️ 账号 [${i + 1}] sessionid 无效，跳过。`);
+            console.log(`⚠️ sessionid 无效，跳过。`);
+            message1 += `${accountTitle} ❌ Cookie无效\n`;
             continue;
         }
 
         try {
-            // 1. 查询当前可抢列表
             let checkRes = await checkIn();
             if (checkRes && checkRes.code == 1) {
                 let rushList = checkRes.data?.rushBuyList || [];
-                // 查找包含“5元”标题的券
                 let target = rushList.find(item => item.title.includes("5元"));
 
                 if (target) {
-                    console.log(`✅ 找到目标: ${target.title} | 状态: ${target.buttonText}`);
+                    console.log(`✅ 找到: ${target.title} | 状态: ${target.buttonText}`);
                     
-                    // status < 3 通常表示可以抢购（具体根据实际返回调整）
                     if (target.status < 3) {
-                        console.log(`🚀 开始执行抢购循环，共 10 次...`);
+                        let successCount = 0;
+                        let lastMsg = '';
                         
                         for (let count = 0; count < 10; count++) {
                             let res = await signIn(target.id);
-                            let timePrefix = $.time('HH:mm:ss.S');
+                            let timeStr = $.time('HH:mm:ss.S');
+                            lastMsg = res.cnMessage || (res.code == 1 ? '成功' : '失败');
+                            console.log(`   [${timeStr}] 第 ${count + 1} 次: ${lastMsg}`);
                             
-                            console.log(`   [${timePrefix}] 第 ${count + 1} 次: ${res.cnMessage || (res.code == 1 ? '成功' : '失败')}`);
-                            
-                            // 如果返回结果提示已上限或领过，直接跳出当前账号循环
-                            if (res.cnMessage && (res.cnMessage.includes("上限") || res.cnMessage.includes("领过"))) {
-                                console.log(`停止抢购：该账号已达上限或已领取。`);
-                                break;
-                            }
-                            
-                            // 抢券间隔，防止触发风控，建议 200ms
-                            await $.wait(200);
+                            if (res.code == 1) successCount++;
+                            if (lastMsg.includes("上限") || lastMsg.includes("领过")) break;
+                            await $.wait(150);
                         }
+                        message1 += `${accountTitle} 抢券结果: ${lastMsg} (成功${successCount}次)\n`;
                     } else {
-                        console.log(`⚠️ 无法抢购，当前状态: ${target.buttonText}`);
+                        console.log(`⚠️ 无法抢购: ${target.buttonText}`);
+                        message1 += `${accountTitle} 状态: ${target.buttonText}\n`;
                     }
                 } else {
-                    console.log(`❌ 未发现“5元”秒杀券，请确认活动是否开启。`);
+                    console.log(`❌ 未发现5元券`);
+                    message1 += `${accountTitle} ❌ 未发现5元券\n`;
                 }
-            } else if (checkRes && checkRes.code == 14) {
-                console.log(`❌ sessionid 已失效，尝试下一个账号。`);
             } else {
-                console.log(`❌ 查询失败: ${checkRes?.cnMessage || '未知错误'}`);
+                let errMsg = checkRes?.cnMessage || '请求失败';
+                console.log(`❌ ${errMsg}`);
+                message1 += `${accountTitle} ❌ ${errMsg}\n`;
             }
         } catch (err) {
-            console.log(`❌ 执行过程中发生异常: ${err}`);
+            console.log(`❌ 运行异常: ${err}`);
         }
     }
     
-    console.log(`\n🎉 所有账号处理完毕！`);
+    // --- 所有账号跑完后发送通知 ---
+    console.log(`\n🎉 执行完毕，发送通知...`);
+    await SendMsg(message1); 
 
 })()
-.catch((e) => { $.log("", `❌ 脚本致命异常: ${e}`, ""); })
+.catch((e) => { $.log("", `❌ 致命异常: ${e}`, ""); })
 .finally(() => { $.done(); });
 
 
