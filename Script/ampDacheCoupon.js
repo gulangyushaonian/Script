@@ -16,64 +16,96 @@ Cookie获取/签到用这个脚本：https://raw.githubusercontent.com/wf021325/
  */
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/*
+高德抢券 - 多账号轮询版
+抢购次数：固定每个账号10次
+青龙Cookie环境变量：GD_Val，多账号用 @ 或 换行符 分隔
+*/
+
 const $ = new Env("高德抢券");
-const _key = 'GD_Val1';
-var gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
-$.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';//false-true
+const _key = 'GD_Val';
+let gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
+$.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';
 var message1 = '';
 
-
-!(async() => {
-    if (gdVal != undefined) {
-        let obj = {userId,adiu,sessionid} = JSON.parse(gdVal)
-        if (sessionid.length < 30) {$.msg($.name, '', '❌请先获取sessionid🎉');return;}} else {$.msg($.name, '', '❌请先获取sessionid🎉');return;}
-
-	intRSA();
-	intCryptoJS();
-    indMD5();
-
-    message1 += `----------高德抢券（3041）----------\n`;
-    let {code,data,message} = await checkIn();
-    if(code==1 && data?.rushBuyList.length>= 2 ){
-    let buyId;
-        for (let i = 0; i < data.rushBuyList.length; i++) {
-            if (data.rushBuyList[i].title === "打车秒杀5元券") {
-                buyId = data.rushBuyList[i].id;
-                message1 += `查券:${data?.rushBuyList[i]?.title} - ${data?.rushBuyList[i]?.buttonText}\n`;
-                break;
-            }
-        }
-
-        //  console.log("data?.status:", buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status >= 3);
-        if(buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status < 3){
-            let a = $.getdata('gdgdgd') || 50;
-            for (let i = 0; i < a; i++) {
-                // console.log("调用 signIn() 函数的结果：",await signIn(buyId));
-                let {code,data,cnMessage} = await signIn(buyId);
-                
-                if(code==1){
-                    message1 += $.time('HH:mm:ss.S')+` 抢券${i+1}次:${data?.productName} - ${data?.title}\n`;
-                    //  console.log(`抢券${i + 1}次成功:`, data?.productName, '-', data?.title);
-
-                }else {
-                    message1 += $.time('HH:mm:ss.S')+` 抢券${i+1}次:${cnMessage}\n`;
-                    //  console.log(`抢券${i + 1}次失败:`, cnMessage);
-
-                }
-            }
-        }
-
-    }else if(code==14){
-        message1 += `查券:sessionid失效请重新获取\n`;
+!(async () => {
+    if (!gdVal) {
+        $.msg($.name, '', '❌未检测到环境变量 GD_Val');
+        return;
     }
 
-    console.log(message1);//node,青龙日志
+    // 解析多账号
+    let users = [];
+    if (gdVal.indexOf('@') > -1) {
+        users = gdVal.split('@');
+    } else if (gdVal.indexOf('\n') > -1) {
+        users = gdVal.split('\n');
+    } else {
+        users = [gdVal];
+    }
+
+    intRSA();
+    intCryptoJS();
+    indMD5();
+
+    for (let i = 0; i < users.length; i++) {
+        let userStr = users[i].trim();
+        if (!userStr) continue;
+
+        try {
+            // 设置当前账号全局变量
+            let currentObj = JSON.parse(userStr);
+            userId = currentObj.userId;
+            adiu = currentObj.adiu;
+            sessionid = currentObj.sessionid;
+
+            if (!sessionid || sessionid.length < 30) {
+                console.log(`\n账号 [${i + 1}] sessionid 无效，跳过...`);
+                continue;
+            }
+
+            console.log(`\n开始执行第 ${i + 1} 个账号: ${userId}`);
+            message1 = `----------账号 ${i + 1} 执行结果----------\n`;
+
+            let { code, data } = await checkIn();
+            if (code == 1 && data?.rushBuyList.length >= 2) {
+                let buyId;
+                for (let j = 0; j < data.rushBuyList.length; j++) {
+                    if (data.rushBuyList[j].title === "打车秒杀5元券") {
+                        buyId = data.rushBuyList[j].id;
+                        message1 += `查券: ${data.rushBuyList[j].title} - ${data.rushBuyList[j].buttonText}\n`;
+                        break;
+                    }
+                }
+
+                if (buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status < 3) {
+                    // 每个账号固定抢10次
+                    for (let count = 0; count < 10; count++) {
+                        let res = await signIn(buyId);
+                        if (res.code == 1) {
+                            message1 += $.time('HH:mm:ss.S') + ` 抢券第${count + 1}次: ${res.data?.title} 成功\n`;
+                        } else {
+                            message1 += $.time('HH:mm:ss.S') + ` 抢券第${count + 1}次: ${res.cnMessage}\n`;
+                        }
+                    }
+                }
+            } else if (code == 14) {
+                message1 += `查券: sessionid失效\n`;
+            }
+
+            console.log(message1);
+        } catch (e) {
+            console.log(`账号 [${i + 1}] 解析或执行失败: ${e}`);
+        }
+    }
+
     await SendMsg(message1);
 
 })()
-    .catch((e) => {$.log("", `❌失败! 原因: ${e}!`, "");})
-    .finally(() => {$.done();});
+.catch((e) => { $.log("", `❌脚本异常: ${e}!`, ""); })
+.finally(() => { $.done(); });
 
+// 如下为不需要修改的
 function getKey() {
     for (var t = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678', n = t.length, r = "", i = 0; i < 16; i++)
         r += t.charAt(Math.floor(Math.random() * n));
