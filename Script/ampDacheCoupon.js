@@ -18,90 +18,113 @@ Cookie获取/签到用这个脚本：https://raw.githubusercontent.com/wf021325/
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 /*
 /*
-高德抢券 - 多账号适配修正版
-1. 兼容多种 Cookie 格式（adiu/deviceId, sessionid/sessionId）
-2. 支持多账号轮询（@ 或 换行分隔）
-3. 每个账号固定抢 10 次，无效账号自动跳过
+高德抢券 - 完整多账号轮询版
+1. 适配 getToken 的数组存储格式：[{"userId":"...","sessionid":"..."}, ...]
+2. 每个账号固定抢券 10 次。
+3. 自动跳过失效或格式错误的账号。
 */
 
 const $ = new Env("高德抢券");
 const _key = 'GD_Val';
+// 获取环境变量或持久化数据
 let gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
+$.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';
 
 !(async () => {
     if (!gdVal) {
-        $.msg($.name, '', '❌ 未检测到环境变量 GD_Val');
+        $.msg($.name, '❌ 未检测到数据', '请先通过重写获取 Cookie');
         return;
     }
 
-    // 解析多账号
-    let userList = gdVal.split(/[ \n@]+/).filter(x => x.length > 0);
+    let userList = [];
+    try {
+        // 解析 getToken 存入的数组
+        let parsedData = JSON.parse(gdVal);
+        userList = Array.isArray(parsedData) ? parsedData : [parsedData];
+    } catch (e) {
+        console.log("❌ GD_Val 解析失败，请确认是否为标准 JSON 格式");
+        return;
+    }
 
+    console.log(`\n🔔 检测到共计 ${userList.length} 个账号，准备开始轮询...`);
+
+    // 初始化加密组件
     intRSA();
     intCryptoJS();
     indMD5();
 
     for (let i = 0; i < userList.length; i++) {
-        let currentRaw = userList[i].trim();
+        let account = userList[i];
+        
+        // --- 核心变量同步：确保每个请求都使用当前循环账号的数据 ---
+        userId = account.userId || "";
+        adiu = account.adiu || ""; 
+        sessionid = account.sessionid || "";
+
+        console.log(`\n>>>>>> [账号 ${i + 1}] ID: ${userId} <<<<<<`);
+
+        // 验证 sessionid 是否存在
+        if (!sessionid || sessionid.length < 20) {
+            console.log(`⚠️ 账号 [${i + 1}] sessionid 无效，跳过。`);
+            continue;
+        }
+
         try {
-            let currentAccount = JSON.parse(currentRaw);
-            
-            // 【核心修改】：按照 getToken 的逻辑兼容字段名
-            userId = currentAccount.userId || "";
-            // 如果是小程序抓取的，字段可能是 deviceId，脚本请求需要 adiu
-            adiu = currentAccount.adiu || currentAccount.deviceId || "";
-            // 如果是小程序抓取的，字段可能是 sessionId，脚本请求需要 sessionid
-            sessionid = currentAccount.sessionid || currentAccount.sessionId || "";
-
-            console.log(`\n>>>>>> 账号 [${i + 1}] 开始执行 (ID: ${userId}) <<<<<<`);
-
-            // 校验 sessionid 长度，防止空跑
-            if (!sessionid || sessionid.length < 20) {
-                console.log(`❌ 账号 [${i + 1}] sessionid/sessionId 无效（内容：${sessionid}），跳过。`);
-                continue;
-            }
-
-            // 执行抢券逻辑
+            // 1. 查询当前可抢列表
             let checkRes = await checkIn();
             if (checkRes && checkRes.code == 1) {
                 let rushList = checkRes.data?.rushBuyList || [];
-                let targetCoupon = rushList.find(item => item.title.includes("5元券"));
+                // 查找包含“5元”标题的券
+                let target = rushList.find(item => item.title.includes("5元"));
 
-                if (targetCoupon) {
-                    console.log(`✅ 找到目标: ${targetCoupon.title} (状态: ${targetCoupon.buttonText})`);
+                if (target) {
+                    console.log(`✅ 找到目标: ${target.title} | 状态: ${target.buttonText}`);
                     
-                    if (targetCoupon.status < 3) {
-                        // 每个账号固定抢 10 次
+                    // status < 3 通常表示可以抢购（具体根据实际返回调整）
+                    if (target.status < 3) {
+                        console.log(`🚀 开始执行抢购循环，共 10 次...`);
+                        
                         for (let count = 0; count < 10; count++) {
-                            let res = await signIn(targetCoupon.id);
+                            let res = await signIn(target.id);
                             let timePrefix = $.time('HH:mm:ss.S');
-                            if (res.code == 1) {
-                                console.log(`${timePrefix} [第${count + 1}次] 抢购成功！`);
-                            } else {
-                                console.log(`${timePrefix} [第${count + 1}次] ${res.cnMessage || '失败'}`);
+                            
+                            console.log(`   [${timePrefix}] 第 ${count + 1} 次: ${res.cnMessage || (res.code == 1 ? '成功' : '失败')}`);
+                            
+                            // 如果返回结果提示已上限或领过，直接跳出当前账号循环
+                            if (res.cnMessage && (res.cnMessage.includes("上限") || res.cnMessage.includes("领过"))) {
+                                console.log(`停止抢购：该账号已达上限或已领取。`);
+                                break;
                             }
-                            if (res.cnMessage && res.cnMessage.includes("上限")) break; 
+                            
+                            // 抢券间隔，防止触发风控，建议 200ms
+                            await $.wait(200);
                         }
                     } else {
-                        console.log(`⚠️ 该账号今日已领完，切换下一个。`);
+                        console.log(`⚠️ 无法抢购，当前状态: ${target.buttonText}`);
                     }
+                } else {
+                    console.log(`❌ 未发现“5元”秒杀券，请确认活动是否开启。`);
                 }
             } else if (checkRes && checkRes.code == 14) {
-                console.log(`❌ 账号 [${i + 1}] sessionid 已失效。`);
+                console.log(`❌ sessionid 已失效，尝试下一个账号。`);
             } else {
-                console.log(`❌ 账号 [${i + 1}] 查询失败: ${checkRes?.cnMessage || '未知错误'}`);
+                console.log(`❌ 查询失败: ${checkRes?.cnMessage || '未知错误'}`);
             }
-
-        } catch (e) {
-            console.log(`❌ 账号 [${i + 1}] 解析 JSON 失败，请检查格式。内容: ${currentRaw.substring(0,20)}...`);
+        } catch (err) {
+            console.log(`❌ 执行过程中发生异常: ${err}`);
         }
     }
+    
+    console.log(`\n🎉 所有账号处理完毕！`);
+
 })()
-.catch((e) => { $.log("", `❌ 脚本异常: ${e}`, ""); })
+.catch((e) => { $.log("", `❌ 脚本致命异常: ${e}`, ""); })
 .finally(() => { $.done(); });
 
 
-// 如下为不需要修改的
+// ==========================================
+// 所有的加密和网络请求函数（保持原样，不用动）
+// ==========================================
 function getKey() {
     for (var t = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678', n = t.length, r = "", i = 0; i < 16; i++)
         r += t.charAt(Math.floor(Math.random() * n));
