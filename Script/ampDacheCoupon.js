@@ -17,16 +17,16 @@ Cookie获取/签到用这个脚本：https://raw.githubusercontent.com/wf021325/
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 /*
-高德抢券 - 多账号修正版
-1. 支持多账号轮询（GD_Val 环境变量，多账号用 @ 或换行分隔）
-2. 每个账号固定抢 10 次
-3. 自动跳过 sessionid 无效的账号
+/*
+高德抢券 - 多账号适配修正版
+1. 兼容多种 Cookie 格式（adiu/deviceId, sessionid/sessionId）
+2. 支持多账号轮询（@ 或 换行分隔）
+3. 每个账号固定抢 10 次，无效账号自动跳过
 */
 
 const $ = new Env("高德抢券");
 const _key = 'GD_Val';
 let gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
-$.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';
 
 !(async () => {
     if (!gdVal) {
@@ -34,79 +34,68 @@ $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'fal
         return;
     }
 
-    // 解析多账号 (支持 @ 分隔或换行分隔)
-    let userList = [];
-    if (gdVal.includes('@')) {
-        userList = gdVal.split('@');
-    } else if (gdVal.includes('\n')) {
-        userList = gdVal.split('\n');
-    } else {
-        userList = [gdVal];
-    }
+    // 解析多账号
+    let userList = gdVal.split(/[ \n@]+/).filter(x => x.length > 0);
 
-    // 初始化加密
     intRSA();
     intCryptoJS();
     indMD5();
 
     for (let i = 0; i < userList.length; i++) {
         let currentRaw = userList[i].trim();
-        if (!currentRaw) continue;
-
         try {
             let currentAccount = JSON.parse(currentRaw);
             
-            // 重要：必须在这里更新全局变量，供底层的 checkIn/signIn 函数使用
-            userId = currentAccount.userId;
-            adiu = currentAccount.adiu;
-            sessionid = currentAccount.sessionid;
+            // 【核心修改】：按照 getToken 的逻辑兼容字段名
+            userId = currentAccount.userId || "";
+            // 如果是小程序抓取的，字段可能是 deviceId，脚本请求需要 adiu
+            adiu = currentAccount.adiu || currentAccount.deviceId || "";
+            // 如果是小程序抓取的，字段可能是 sessionId，脚本请求需要 sessionid
+            sessionid = currentAccount.sessionid || currentAccount.sessionId || "";
 
             console.log(`\n>>>>>> 账号 [${i + 1}] 开始执行 (ID: ${userId}) <<<<<<`);
 
-            if (!sessionid || sessionid.length < 30) {
-                console.log(`❌ 账号 [${i + 1}] sessionid 格式错误，已跳过。`);
+            // 校验 sessionid 长度，防止空跑
+            if (!sessionid || sessionid.length < 20) {
+                console.log(`❌ 账号 [${i + 1}] sessionid/sessionId 无效（内容：${sessionid}），跳过。`);
                 continue;
             }
 
-            // 1. 检查券列表
+            // 执行抢券逻辑
             let checkRes = await checkIn();
-            if (checkRes.code == 1) {
+            if (checkRes && checkRes.code == 1) {
                 let rushList = checkRes.data?.rushBuyList || [];
-                let targetCoupon = rushList.find(item => item.title === "打车秒杀5元券");
+                let targetCoupon = rushList.find(item => item.title.includes("5元券"));
 
                 if (targetCoupon) {
-                    let buyId = targetCoupon.id;
                     console.log(`✅ 找到目标: ${targetCoupon.title} (状态: ${targetCoupon.buttonText})`);
-
+                    
                     if (targetCoupon.status < 3) {
-                        // 2. 每个账号固定抢 10 次
+                        // 每个账号固定抢 10 次
                         for (let count = 0; count < 10; count++) {
-                            let res = await signIn(buyId);
+                            let res = await signIn(targetCoupon.id);
                             let timePrefix = $.time('HH:mm:ss.S');
                             if (res.code == 1) {
                                 console.log(`${timePrefix} [第${count + 1}次] 抢购成功！`);
                             } else {
                                 console.log(`${timePrefix} [第${count + 1}次] ${res.cnMessage || '失败'}`);
                             }
-                            // 如果提示活动太火爆或频繁，可以适当增加 $.wait(500)
+                            if (res.cnMessage && res.cnMessage.includes("上限")) break; 
                         }
                     } else {
-                        console.log(`⚠️ 该账号今日已抢或券已领完，切换下一个。`);
+                        console.log(`⚠️ 该账号今日已领完，切换下一个。`);
                     }
-                } else {
-                    console.log(`❌ 未在该账号列表中找到 “打车秒杀5元券”`);
                 }
-            } else if (checkRes.code == 14) {
-                console.log(`❌ 账号 [${i + 1}] sessionid 已失效，跳过该账号。`);
+            } else if (checkRes && checkRes.code == 14) {
+                console.log(`❌ 账号 [${i + 1}] sessionid 已失效。`);
             } else {
-                console.log(`❌ 账号 [${i + 1}] 查询失败: ${checkRes.cnMessage}`);
+                console.log(`❌ 账号 [${i + 1}] 查询失败: ${checkRes?.cnMessage || '未知错误'}`);
             }
 
         } catch (e) {
-            console.log(`❌ 账号 [${i + 1}] 解析 JSON 出错: ${e.message}`);
+            console.log(`❌ 账号 [${i + 1}] 解析 JSON 失败，请检查格式。内容: ${currentRaw.substring(0,20)}...`);
         }
     }
-
 })()
 .catch((e) => { $.log("", `❌ 脚本异常: ${e}`, ""); })
 .finally(() => { $.done(); });
