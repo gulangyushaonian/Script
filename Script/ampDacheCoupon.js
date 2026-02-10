@@ -27,88 +27,90 @@ const $ = new Env("高德抢券");
 const _key = 'GD_Val';
 let gdVal = $.getdata(_key) || ($.isNode() ? process.env[_key] : '');
 $.is_debug = ($.isNode() ? process.env.IS_DEDUG : $.getdata('is_debug')) || 'false';
-var message1 = '';
 
 !(async () => {
     if (!gdVal) {
-        $.msg($.name, '', '❌未检测到环境变量 GD_Val');
+        $.msg($.name, '', '❌ 未检测到环境变量 GD_Val');
         return;
     }
 
-    // 解析多账号：支持 @ 或 换行符 分隔
-    let users = [];
-    if (gdVal.indexOf('@') > -1) {
-        users = gdVal.split('@');
-    } else if (gdVal.indexOf('\n') > -1) {
-        users = gdVal.split('\n');
+    // 解析多账号 (支持 @ 分隔或换行分隔)
+    let userList = [];
+    if (gdVal.includes('@')) {
+        userList = gdVal.split('@');
+    } else if (gdVal.includes('\n')) {
+        userList = gdVal.split('\n');
     } else {
-        users = [gdVal];
+        userList = [gdVal];
     }
 
-    // 初始化加密组件
+    // 初始化加密
     intRSA();
     intCryptoJS();
     indMD5();
 
-    for (let i = 0; i < users.length; i++) {
-        let userStr = users[i].trim();
-        if (!userStr) continue;
+    for (let i = 0; i < userList.length; i++) {
+        let currentRaw = userList[i].trim();
+        if (!currentRaw) continue;
 
         try {
-            // 解析当前账号数据
-            let currentObj = JSON.parse(userStr);
-            // 赋值全局变量供后续请求函数使用
-            userId = currentObj.userId;
-            adiu = currentObj.adiu;
-            sessionid = currentObj.sessionid;
+            let currentAccount = JSON.parse(currentRaw);
+            
+            // 重要：必须在这里更新全局变量，供底层的 checkIn/signIn 函数使用
+            userId = currentAccount.userId;
+            adiu = currentAccount.adiu;
+            sessionid = currentAccount.sessionid;
 
-            console.log(`\n===== 开始处理账号 [${i + 1}] =====`);
+            console.log(`\n>>>>>> 账号 [${i + 1}] 开始执行 (ID: ${userId}) <<<<<<`);
 
-            // 校验 sessionid，如果无效则跳过当前账号，处理下一个
             if (!sessionid || sessionid.length < 30) {
-                console.log(`❌ 账号 [${i + 1}] sessionid 无效，已跳过...`);
-                continue; 
+                console.log(`❌ 账号 [${i + 1}] sessionid 格式错误，已跳过。`);
+                continue;
             }
 
-            let { code, data } = await checkIn();
-            if (code == 1 && data?.rushBuyList.length >= 2) {
-                let buyId;
-                for (let j = 0; j < data.rushBuyList.length; j++) {
-                    if (data.rushBuyList[j].title === "打车秒杀5元券") {
-                        buyId = data.rushBuyList[j].id;
-                        console.log(`查券成功: ${data.rushBuyList[j].title}`);
-                        break;
-                    }
-                }
+            // 1. 检查券列表
+            let checkRes = await checkIn();
+            if (checkRes.code == 1) {
+                let rushList = checkRes.data?.rushBuyList || [];
+                let targetCoupon = rushList.find(item => item.title === "打车秒杀5元券");
 
-                if (buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status < 3) {
-                    // 固定每个账号抢 10 次
-                    for (let count = 0; count < 10; count++) {
-                        let res = await signIn(buyId);
-                        let timeStr = $.time('HH:mm:ss.S');
-                        if (res.code == 1) {
-                            console.log(`${timeStr} 抢券第${count + 1}次: 成功`);
-                            message1 += `${timeStr} 账号[${i+1}] 抢券成功\n`;
-                        } else {
-                            console.log(`${timeStr} 抢券第${count + 1}次: ${res.cnMessage}`);
+                if (targetCoupon) {
+                    let buyId = targetCoupon.id;
+                    console.log(`✅ 找到目标: ${targetCoupon.title} (状态: ${targetCoupon.buttonText})`);
+
+                    if (targetCoupon.status < 3) {
+                        // 2. 每个账号固定抢 10 次
+                        for (let count = 0; count < 10; count++) {
+                            let res = await signIn(buyId);
+                            let timePrefix = $.time('HH:mm:ss.S');
+                            if (res.code == 1) {
+                                console.log(`${timePrefix} [第${count + 1}次] 抢购成功！`);
+                            } else {
+                                console.log(`${timePrefix} [第${count + 1}次] ${res.cnMessage || '失败'}`);
+                            }
+                            // 如果提示活动太火爆或频繁，可以适当增加 $.wait(500)
                         }
+                    } else {
+                        console.log(`⚠️ 该账号今日已抢或券已领完，切换下一个。`);
                     }
                 } else {
-                    console.log(`该账号今日已抢或券不可用`);
+                    console.log(`❌ 未在该账号列表中找到 “打车秒杀5元券”`);
                 }
-            } else if (code == 14) {
-                console.log(`❌ 账号 [${i + 1}] sessionid 已过期`);
+            } else if (checkRes.code == 14) {
+                console.log(`❌ 账号 [${i + 1}] sessionid 已失效，跳过该账号。`);
+            } else {
+                console.log(`❌ 账号 [${i + 1}] 查询失败: ${checkRes.cnMessage}`);
             }
+
         } catch (e) {
-            console.log(`❌ 账号 [${i + 1}] 解析失败: ${e.message}`);
+            console.log(`❌ 账号 [${i + 1}] 解析 JSON 出错: ${e.message}`);
         }
     }
 
-    if (message1) await SendMsg(message1);
-
 })()
-.catch((e) => { $.log("", `❌脚本异常: ${e}!`, ""); })
+.catch((e) => { $.log("", `❌ 脚本异常: ${e}`, ""); })
 .finally(() => { $.done(); });
+
 
 // 如下为不需要修改的
 function getKey() {
