@@ -48,80 +48,166 @@ hostname = *.amap.com
 //         }
 //     }
 // }
+
+
+// function getQuery(l) {
+//     const xck = RSA_Public_Encrypt(l.key);
+//     const _in = Encrypt_Body(Json2Form({"channel": l.channel, "sign": l.sign}), l.key);
+//     const query = {"adiu": $.adiu, "node": l.node, "env": "prod", "xck_channel": "default", "xck": encodeURIComponent(xck), "in": encodeURIComponent(_in)}
+//     return Json2Form(query)
+// }
+
+// function getReq(l) {
+//     const characters = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678';
+//     l.key = Array.from({length: 16}, () => characters.charAt(Math.floor(Math.random() * characters.length))).join('');
+//     l.sign = md5(l.channel + '@oEEln6dQJK7lRfGxQjlyGthZ4loXcRHR').toUpperCase();
+//     const url = l.url + getQuery(l);
+//     let body = {
+//         ...l.addbody,
+//         "bizVersion": "080700",//040206-060800
+//         "h5version": "8.87.10",//7.40.4-6.80.17
+//         "platform": "ios",
+//         "tid": $.adiu,
+//         "eId": "",
+//         "adiu": $.adiu,
+//         "diu": $.adiu,
+//         "imei": $.adiu,
+//         "idfa": $.adiu,
+//         "enterprise": "0",
+//         "ts": new Date().getTime(),
+//         "uid": $.userId,
+//         "userId": $.userId,
+//         "channel": l.channel,
+//         "dip": "20020",
+//         "adCode": "",
+//         "actID": l.actID,
+//         "node": l.node,
+//         "sign": l.sign
+//     };
+//     body = 'in=' + encodeURIComponent(Encrypt_Body(Json2Form(body), l.key));
+//     headers = {
+//         'Content-Type': 'application/x-www-form-urlencoded',
+//         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 amap/12.13.1.2034 AliApp(amap/12.13.1.2034) NetType/WiFi',
+//         'sessionid': $.sessionid
+//     };
+//     return {url, body, headers};
+// }
+
+// //查询
+// async function checkIn(list) {
+//     list.addbody = {"playTypes": "dailySign", "playIDs": list.playID};
+//     list.url = 'https://m5.amap.com/ws/car-place/show?'
+//     const {code, data, message} = await httpRequest(getReq(list));
+//     if (code == '1') {
+//         if (!data.actID) {
+//             pushMsg(`${list.name}->查询:请到福利中心查看活动是否存在(若存在请联系脚本作者更新)`);
+//             return false;
+//         }
+//         const today = $.time('MM月dd日')
+//         let foundItem = data?.playMap?.dailySign?.signList?.find(t => t?.date === today);//查找今天
+//         if (foundItem) {
+//             $.signTerm = data?.playMap?.dailySign?.signTerm;
+//             $.signDay = foundItem.day;
+//             //const amount = foundItem.award.amount;//5里程
+//             //const isSign = foundItem.isSign;//isSign = 1 为签到过，懒得管了，让它再提交一次吧
+//             //$.log(`${$.toStr(foundItem)}  ${$.signTerm}|${$.signDay}|${isSign}`);
+//             //$.message += `${list.name}->查询:${today}  ${amount}里程\n`;
+//             return true;
+//         }
+//     } else {
+//         _msg = `${list.name}->查询:${message}`
+//         pushMsg(_msg)
+//     }
+// }
+// //签到
+// async function signIn(list) {
+//     list.addbody = {playID: list.playID, signTerm: $.signTerm, signType: "1", signDay: $.signDay, div: ""};
+//     list.url = 'https://m5.amap.com/ws/alice/activity/daily_sign/do_sign?';
+//     const {code, message} = await httpRequest(getReq(list));
+//     _msg = `${list.name}->签到: ${code === '1' ? '签到成功' : message}`;
+//     pushMsg(_msg)
+// }
+
+// function getToken() {
+//     if (!$request || $request.method === 'OPTIONS') return;
+//     let abc = {}, mark = '';
+//     if (/\/common\/(alipaymini|wxmini)\?_ENCRYPT=/.test($request.url)) {
+//         let encryptedData = $request.url.split("_ENCRYPT=")[1].split("&")[0];
+//         let decodedData = base64decode(encryptedData);
+//         decodedData.split('&').forEach(item => {let [key, value] = item.split('=');abc[key] = value;});
+//         abc.userId = abc.userId;
+//         abc.adiu = abc.deviceId;
+//         abc.sessionid = abc.sessionId;
+//         mark = '小程序';
+//     }else {
+//         let responseData = $.toObj($response.body);
+//         abc.userId = responseData.content.uid;
+//         abc.adiu = responseData.content.adiu;
+//         let headers = ObjectKeys2LowerCase($request.headers);
+//         abc.sessionid = headers['sessionid'] || headers['cookie']?.split("sessionid=")[1]?.split(";")[0];
+//         mark = 'Cookie';
+//     }
+//     if (abc.sessionid && abc.sessionid.length > 30) {
+//         $.setdata($.toStr(abc), _key);
+//         $.msg($.name, `从${mark}:获取签到sessionid成功🎉`, $.toStr(abc));
+//     }
+// }
+
+// !(async () => {
+//     if(typeof $request !== `undefined`){
+//         getToken();
+//         return;
+//     }
+//     if (!ck || !ck.sessionid || ck.sessionid.length < 30) {
+//         sendMsg('❌请先获取sessionid🎉')
+//         return;
+//     }
+//     $.userId = ck.userId;
+//     $.sessionid = ck.sessionid;
+//     $.adiu = ck.adiu;
+//     await main();
+// })().catch((e) => $.messages.push(e.message || e) && $.logErr(e))
+//     .finally(async () => {
+//         await sendMsg($.messages.join('\n'));
+//         $.done();
+//     })
+
+
+
+/*
+高德打车签到 (多账号增强版)
+功能：支持多账号自动获取、自动去重、顺序签到
+获取方式：QX开启重写，切换不同账号进入【福利中心】，脚本会自动累加账号。
+*/
+
 const $ = new Env("高德地图签到");
 const _key = 'GD_Val';
-
-$.is_debug = 'true';
+$.is_debug = 'false';
 $.messages = [];
 
-// ========= 读取多账号 =========
+// 【核心修改：初始化多账号列表】
+let ckRaw = $.getdata(_key) || $.getval(_key);
 let ckList = [];
-try {
-    ckList = $.toObj(getEnv(_key));
-    if (!Array.isArray(ckList)) ckList = [ckList];
-} catch (e) {
-    $.log('❌ GD_Val 解析失败');
+if (ckRaw) {
+    try {
+        let parsed = JSON.parse(ckRaw);
+        ckList = Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+        $.log("⚠️ 现有数据格式非JSON，已重置");
+    }
 }
 
-// ========= 主入口 =========
-(async () => {
-    if (!ckList.length) {
-        $.log('❌ 未获取到任何账号');
-        return;
-    }
-    await main();
-})()
-  .catch(e => $.logErr(e))
-  .finally(() => $.done());
-
-// ========= 主逻辑 =========
 async function main() {
-    intRSA();
-    intCryptoJS();
-
-    const taskList = [
-        {
-            "name": "APP端",
-            "node": "Amap",
-            "channel": "amap",
-            "actID": "5DRBxfzndQq",
-            "playID": "5DRBxfFiaXN"
-        }
-        // 其他端你要开，直接取消注释即可
+    intRSA(), intCryptoJS();
+    const list = [
+        {"name": "APP端", "node": "Amap", "channel": "amap", "actID": "5DRBxfzndQq", "playID": "5DRBxfFiaXN"}
     ];
-
-    for (let i = 0; i < ckList.length; i++) {
-        const ck = ckList[i];
-        await grabCoupon(ck);
-
-        $.log(`\n========== 🚕 账号 ${i + 1} 开始 ==========`);
-
-        if (!ck.sessionid || ck.sessionid.length < 30) {
-            $.log('❌ sessionid 无效，跳过');
-            continue;
+    for (const index of list) {
+        if (await checkIn(index)) {
+            await signIn(index)
         }
-
-        // ⭐ 每个账号重新绑定上下文（关键）
-        $.adiu = ck.adiu;
-        $.sessionid = ck.sessionid;
-        $.userId = ck.userId;
-
-        for (const task of taskList) {
-            $.log(`➡️ ${task.name}`);
-            try {
-                if (await checkIn(task)) {
-                    await signIn(task);
-                }
-            } catch (e) {
-                $.log(`❌ ${task.name} 执行异常`);
-            }
-        }
-
-        await $.wait(2000); // 账号间隔，防风控
     }
 }
-
-// 如下原来不动
 
 function getQuery(l) {
     const xck = RSA_Public_Encrypt(l.key);
@@ -137,11 +223,10 @@ function getReq(l) {
     const url = l.url + getQuery(l);
     let body = {
         ...l.addbody,
-        "bizVersion": "080700",//040206-060800
-        "h5version": "8.87.10",//7.40.4-6.80.17
+        "bizVersion": "080700",
+        "h5version": "8.87.10",
         "platform": "ios",
         "tid": $.adiu,
-        "eId": "",
         "adiu": $.adiu,
         "diu": $.adiu,
         "imei": $.adiu,
@@ -166,41 +251,35 @@ function getReq(l) {
     return {url, body, headers};
 }
 
-//查询
 async function checkIn(list) {
     list.addbody = {"playTypes": "dailySign", "playIDs": list.playID};
     list.url = 'https://m5.amap.com/ws/car-place/show?'
     const {code, data, message} = await httpRequest(getReq(list));
     if (code == '1') {
         if (!data.actID) {
-            pushMsg(`${list.name}->查询:请到福利中心查看活动是否存在(若存在请联系脚本作者更新)`);
+            pushMsg(`${list.name}->查询:请到福利中心查看活动是否存在`);
             return false;
         }
         const today = $.time('MM月dd日')
-        let foundItem = data?.playMap?.dailySign?.signList?.find(t => t?.date === today);//查找今天
+        let foundItem = data?.playMap?.dailySign?.signList?.find(t => t?.date === today);
         if (foundItem) {
             $.signTerm = data?.playMap?.dailySign?.signTerm;
             $.signDay = foundItem.day;
-            //const amount = foundItem.award.amount;//5里程
-            //const isSign = foundItem.isSign;//isSign = 1 为签到过，懒得管了，让它再提交一次吧
-            //$.log(`${$.toStr(foundItem)}  ${$.signTerm}|${$.signDay}|${isSign}`);
-            //$.message += `${list.name}->查询:${today}  ${amount}里程\n`;
             return true;
         }
     } else {
-        _msg = `${list.name}->查询:${message}`
-        pushMsg(_msg)
+        pushMsg(`${list.name}->查询:${message}`)
     }
 }
-//签到
+
 async function signIn(list) {
     list.addbody = {playID: list.playID, signTerm: $.signTerm, signType: "1", signDay: $.signDay, div: ""};
     list.url = 'https://m5.amap.com/ws/alice/activity/daily_sign/do_sign?';
     const {code, message} = await httpRequest(getReq(list));
-    _msg = `${list.name}->签到: ${code === '1' ? '签到成功' : message}`;
-    pushMsg(_msg)
+    pushMsg(`${list.name}->签到: ${code === '1' ? '签到成功' : message}`)
 }
 
+// 【核心修改：支持多账号自动保存与去重】
 function getToken() {
     if (!$request || $request.method === 'OPTIONS') return;
     let abc = {}, mark = '';
@@ -208,44 +287,72 @@ function getToken() {
         let encryptedData = $request.url.split("_ENCRYPT=")[1].split("&")[0];
         let decodedData = base64decode(encryptedData);
         decodedData.split('&').forEach(item => {let [key, value] = item.split('=');abc[key] = value;});
-        abc.userId = abc.userId;
         abc.adiu = abc.deviceId;
         abc.sessionid = abc.sessionId;
         mark = '小程序';
-    }else {
-        let responseData = $.toObj($response.body);
-        abc.userId = responseData.content.uid;
-        abc.adiu = responseData.content.adiu;
-        let headers = ObjectKeys2LowerCase($request.headers);
-        abc.sessionid = headers['sessionid'] || headers['cookie']?.split("sessionid=")[1]?.split(";")[0];
-        mark = 'Cookie';
+    } else if ($response && $response.body) {
+        try {
+            let responseData = $.toObj($response.body);
+            abc.userId = responseData.content.uid;
+            abc.adiu = responseData.content.adiu;
+            let headers = ObjectKeys2LowerCase($request.headers);
+            abc.sessionid = headers['sessionid'] || headers['cookie']?.split("sessionid=")[1]?.split(";")[0];
+            mark = 'Cookie';
+        } catch(e) { return; }
     }
-    if (abc.sessionid && abc.sessionid.length > 30) {
-        $.setdata($.toStr(abc), _key);
-        $.msg($.name, `从${mark}:获取签到sessionid成功🎉`, $.toStr(abc));
+
+    if (abc.sessionid && abc.userId) {
+        let currentList = [];
+        let savedData = $.getdata(_key) || $.getval(_key);
+        if (savedData) {
+            try {
+                let parsed = JSON.parse(savedData);
+                currentList = Array.isArray(parsed) ? parsed : [parsed];
+            } catch (e) { currentList = []; }
+        }
+        
+        // 去重：剔除 userId 相同的旧数据，添加新数据
+        currentList = currentList.filter(item => item.userId !== abc.userId);
+        currentList.push(abc);
+        
+        const success = $.setdata(JSON.stringify(currentList), _key) || $.setval(JSON.stringify(currentList), _key);
+        if (success) {
+            $.msg($.name, `账号 [${abc.userId}] 获取成功🎉`, `当前共计 ${currentList.length} 个账号\n切换账号进入福利中心可继续添加`);
+        }
     }
 }
 
+// 【核心修改：执行流程循环化】
 !(async () => {
     if(typeof $request !== `undefined`){
         getToken();
         return;
     }
-    if (!ck || !ck.sessionid || ck.sessionid.length < 30) {
-        sendMsg('❌请先获取sessionid🎉')
+
+    if (ckList.length === 0) {
+        sendMsg('❌未找到有效的账号，请先进入福利中心获取');
         return;
     }
-    $.userId = ck.userId;
-    $.sessionid = ck.sessionid;
-    $.adiu = ck.adiu;
-    await main();
-})().catch((e) => $.messages.push(e.message || e) && $.logErr(e))
+
+    $.log(`\n🔔 发现 ${ckList.length} 个账号，开始顺序执行任务...\n`);
+    for (let i = 0; i < ckList.length; i++) {
+        let ck = ckList[i];
+        $.userId = ck.userId;
+        $.sessionid = ck.sessionid;
+        $.adiu = ck.adiu;
+        
+        $.log(`────── [账号 ${i + 1}] ID: ${$.userId} ──────`);
+        await main();
+        await $.wait(2000); 
+    }
+
+})().catch((e) => $.logErr(e))
     .finally(async () => {
-        await sendMsg($.messages.join('\n'));
+        if ($.messages.length > 0) await sendMsg($.messages.join('\n'));
         $.done();
     })
 
-
+// 如下原始参数
 //
 function pushMsg(msg){msg=msg.trimStart().trimEnd(),$.messages.push(msg),$.log(msg)};
 
