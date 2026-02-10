@@ -45,7 +45,7 @@ var message1 = ''; // 用于收集所有账号的通知内容
     }
 
     console.log(`\n🔔 检测到 ${userList.length} 个账号，开始轮询...`);
-    message1 = `找到 ${userList.length} 个账号\n`;
+    message1 = `找到 ${userList.length} 个账号`;
 
     intRSA();
     intCryptoJS();
@@ -89,19 +89,19 @@ var message1 = ''; // 用于收集所有账号的通知内容
                             if (lastMsg.includes("上限") || lastMsg.includes("领过")) break;
                             await $.wait(150);
                         }
-                        message1 += `${accountTitle} 抢券结果: ${lastMsg} (成功${successCount}次)\n`;
+                        message1 += `${accountTitle} 抢券结果: ${lastMsg} (成功${successCount}次)`;
                     } else {
                         console.log(`⚠️ 无法抢购: ${target.buttonText}`);
-                        message1 += `${accountTitle} 状态: ${target.buttonText}\n`;
+                        message1 += `${accountTitle} 状态: ${target.buttonText}`;
                     }
                 } else {
                     console.log(`❌ 未发现5元券`);
-                    message1 += `${accountTitle} ❌ 未发现5元券\n`;
+                    message1 += `${accountTitle} ❌ 未发现5元券`;
                 }
             } else {
                 let errMsg = checkRes?.cnMessage || '请求失败';
                 console.log(`❌ ${errMsg}`);
-                message1 += `${accountTitle} ❌ ${errMsg}\n`;
+                message1 += `${accountTitle} ❌ ${errMsg}`;
             }
         } catch (err) {
             console.log(`❌ 运行异常: ${err}`);
