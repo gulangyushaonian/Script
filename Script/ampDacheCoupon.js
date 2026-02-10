@@ -17,9 +17,10 @@ Cookie获取/签到用这个脚本：https://raw.githubusercontent.com/wf021325/
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 /*
-高德抢券 - 多账号轮询版
-抢购次数：固定每个账号10次
-青龙Cookie环境变量：GD_Val，多账号用 @ 或 换行符 分隔
+高德抢券 - 多账号修正版
+1. 支持多账号轮询（GD_Val 环境变量，多账号用 @ 或换行分隔）
+2. 每个账号固定抢 10 次
+3. 自动跳过 sessionid 无效的账号
 */
 
 const $ = new Env("高德抢券");
@@ -34,7 +35,7 @@ var message1 = '';
         return;
     }
 
-    // 解析多账号
+    // 解析多账号：支持 @ 或 换行符 分隔
     let users = [];
     if (gdVal.indexOf('@') > -1) {
         users = gdVal.split('@');
@@ -44,6 +45,7 @@ var message1 = '';
         users = [gdVal];
     }
 
+    // 初始化加密组件
     intRSA();
     intCryptoJS();
     indMD5();
@@ -53,19 +55,20 @@ var message1 = '';
         if (!userStr) continue;
 
         try {
-            // 设置当前账号全局变量
+            // 解析当前账号数据
             let currentObj = JSON.parse(userStr);
+            // 赋值全局变量供后续请求函数使用
             userId = currentObj.userId;
             adiu = currentObj.adiu;
             sessionid = currentObj.sessionid;
 
-            if (!sessionid || sessionid.length < 30) {
-                console.log(`\n账号 [${i + 1}] sessionid 无效，跳过...`);
-                continue;
-            }
+            console.log(`\n===== 开始处理账号 [${i + 1}] =====`);
 
-            console.log(`\n开始执行第 ${i + 1} 个账号: ${userId}`);
-            message1 = `----------账号 ${i + 1} 执行结果----------\n`;
+            // 校验 sessionid，如果无效则跳过当前账号，处理下一个
+            if (!sessionid || sessionid.length < 30) {
+                console.log(`❌ 账号 [${i + 1}] sessionid 无效，已跳过...`);
+                continue; 
+            }
 
             let { code, data } = await checkIn();
             if (code == 1 && data?.rushBuyList.length >= 2) {
@@ -73,33 +76,35 @@ var message1 = '';
                 for (let j = 0; j < data.rushBuyList.length; j++) {
                     if (data.rushBuyList[j].title === "打车秒杀5元券") {
                         buyId = data.rushBuyList[j].id;
-                        message1 += `查券: ${data.rushBuyList[j].title} - ${data.rushBuyList[j].buttonText}\n`;
+                        console.log(`查券成功: ${data.rushBuyList[j].title}`);
                         break;
                     }
                 }
 
                 if (buyId > 0 && data?.rushBuyList.find(item => item.id === buyId)?.status < 3) {
-                    // 每个账号固定抢10次
+                    // 固定每个账号抢 10 次
                     for (let count = 0; count < 10; count++) {
                         let res = await signIn(buyId);
+                        let timeStr = $.time('HH:mm:ss.S');
                         if (res.code == 1) {
-                            message1 += $.time('HH:mm:ss.S') + ` 抢券第${count + 1}次: ${res.data?.title} 成功\n`;
+                            console.log(`${timeStr} 抢券第${count + 1}次: 成功`);
+                            message1 += `${timeStr} 账号[${i+1}] 抢券成功\n`;
                         } else {
-                            message1 += $.time('HH:mm:ss.S') + ` 抢券第${count + 1}次: ${res.cnMessage}\n`;
+                            console.log(`${timeStr} 抢券第${count + 1}次: ${res.cnMessage}`);
                         }
                     }
+                } else {
+                    console.log(`该账号今日已抢或券不可用`);
                 }
             } else if (code == 14) {
-                message1 += `查券: sessionid失效\n`;
+                console.log(`❌ 账号 [${i + 1}] sessionid 已过期`);
             }
-
-            console.log(message1);
         } catch (e) {
-            console.log(`账号 [${i + 1}] 解析或执行失败: ${e}`);
+            console.log(`❌ 账号 [${i + 1}] 解析失败: ${e.message}`);
         }
     }
 
-    await SendMsg(message1);
+    if (message1) await SendMsg(message1);
 
 })()
 .catch((e) => { $.log("", `❌脚本异常: ${e}!`, ""); })
