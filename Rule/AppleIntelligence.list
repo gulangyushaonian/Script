@@ -8,95 +8,89 @@
 #!date=2026-03-31 16:50:08
 #############################################
 
-# OpenAI ChatGPT
-# AND, ((DOMAIN-KEYWORD, chatgpt-async-webps-prod-), (DOMAIN-SUFFIX, webpubsub.azure.com))
-# AND, ((DOMAIN-KEYWORD, openaicom-api-), (DOMAIN-SUFFIX, azurefd.net))
-HOST-KEYWORD,chatgpt-async-webps-prod-
-HOST-SUFFIX,webpubsub.azure.com
-HOST-KEYWORD,openaicom-api-
-HOST-SUFFIX,azurefd.ne
+# ===== OpenAI / ChatGPT =====
+HOST-SUFFIX,chatgpt.com
+HOST-SUFFIX,chat.com
+HOST-SUFFIX,openai.com
+HOST-SUFFIX,oaistatic.com
+HOST-SUFFIX,oaiusercontent.com
+HOST,chatgpt.livekit.cloud
+HOST,host.livekit.cloud
+HOST-SUFFIX,turn.livekit.cloud
+HOST,openai.com.cdn.cloudflare.net
+HOST,openaiapi-site.azureedge.net
+HOST,openaicomproductionae4b.blob.core.windows.net
+HOST,production-openaicom-storage.azureedge.net
 
-DOMAIN, chatgpt.livekit.cloud
-DOMAIN, host.livekit.cloud
-DOMAIN-SUFFIX, turn.livekit.cloud
-DOMAIN, openai.com.cdn.cloudflare.net
-DOMAIN, openaiapi-site.azureedge.net
-DOMAIN, openaicomproductionae4b.blob.core.windows.net
-DOMAIN, production-openaicom-storage.azureedge.net
-DOMAIN-SUFFIX, chat.com
-DOMAIN-SUFFIX, chatgpt.com
-DOMAIN-SUFFIX, oaistatic.com
-DOMAIN-SUFFIX, oaiusercontent.com
-DOMAIN-SUFFIX, openai.com
-DOMAIN-SUFFIX, sora.com
+# ===== AND逻辑（已转正则等价）=====
+HOST,.*chatgpt-async-webps-prod-.*\.webpubsub\.azure\.com
+HOST,.*openaicom-api-.*\.azurefd\.net
 
-# Apple Intelligence
-DOMAIN-SUFFIX,apple-relay.apple.com
-DOMAIN-SUFFIX,apple-relay.fastly-edge.com
-DOMAIN-SUFFIX,apple-relay.cloudflare.com
-DOMAIN-SUFFIX,apple-relay.akamaized.net
-DOMAIN-SUFFIX,gateway.icloud.com
-DOMAIN-SUFFIX,guzzoni.apple.com
-DOMAIN-SUFFIX,cp4.cloudflare.com
-DOMAIN-SUFFIX,gspe1-ssl.ls.apple.com
-DOMAIN-SUFFIX,apps.mzstatic.com
+# ===== Apple Intelligence =====
+HOST-SUFFIX,apple-relay.apple.com
+HOST-SUFFIX,apple-relay.fastly-edge.com
+HOST-SUFFIX,apple-relay.cloudflare.com
+HOST-SUFFIX,apple-relay.akamaized.net
+HOST-SUFFIX,gateway.icloud.com
+HOST-SUFFIX,guzzoni.apple.com
+HOST-SUFFIX,cp4.cloudflare.com
+HOST-SUFFIX,gspe1-ssl.ls.apple.com
+HOST-SUFFIX,apps.mzstatic.com
 
-# GitHub Copilot
-DOMAIN, api.githubcopilot.com
-DOMAIN, copilot-proxy.githubusercontent.com
-DOMAIN, copilot.microsoft.com
-DOMAIN, sydney.bing.com
-DOMAIN-SUFFIX, githubcopilot.com
+# ===== GitHub Copilot =====
+HOST,api.githubcopilot.com
+HOST,copilot-proxy.githubusercontent.com
+HOST,copilot.microsoft.com
+HOST,sydney.bing.com
+HOST-SUFFIX,githubcopilot.com
 
-# Google Gemini
-DOMAIN, ai.google.dev
-DOMAIN, aida.googleapis.com
-DOMAIN, aistudio.google.com
-DOMAIN, alkalicore-pa.clients6.google.com
-DOMAIN, alkalimakersuite-pa.clients6.google.com
-DOMAIN, bard.google.com
-DOMAIN, deepmind.com
-DOMAIN, deepmind.google
-DOMAIN, geller-pa.googleapis.com
-DOMAIN, gemini.google.com
-DOMAIN, generativeai.google
-DOMAIN, generativelanguage.googleapis.com
-DOMAIN, makersuite.google.com
-DOMAIN, proactivebackend-pa.googleapis.com
+# ===== Google Gemini =====
+HOST,ai.google.dev
+HOST,aida.googleapis.com
+HOST,aistudio.google.com
+HOST,alkalicore-pa.clients6.google.com
+HOST,alkalimakersuite-pa.clients6.google.com
+HOST,bard.google.com
+HOST,deepmind.com
+HOST,deepmind.google
+HOST,geller-pa.googleapis.com
+HOST,gemini.google.com
+HOST,generativeai.google
+HOST,generativelanguage.googleapis.com
+HOST,makersuite.google.com
+HOST,proactivebackend-pa.googleapis.com
 
-# Anthropic Claude
-DOMAIN-SUFFIX, anthropic.com
-DOMAIN-SUFFIX, claude.ai
-DOMAIN-SUFFIX, claude.com
-DOMAIN-SUFFIX, clau.de
-DOMAIN-SUFFIX, claudeusercontent.com
-IP-CIDR, 160.79.104.0/23, no-resolve
-IP-CIDR6, 2607:6bc0::/48, no-resolve
+# ===== Anthropic Claude =====
+HOST-SUFFIX,anthropic.com
+HOST-SUFFIX,claude.ai
+HOST-SUFFIX,claude.com
+HOST-SUFFIX,clau.de
+HOST-SUFFIX,claudeusercontent.com
 
-# JetBrains AI
-DOMAIN-SUFFIX, grazie.ai
-DOMAIN-SUFFIX, grazie.aws.intellij.net
-DOMAIN-SUFFIX, jetbrains.ai
+# ===== JetBrains AI =====
+HOST-SUFFIX,grazie.ai
+HOST-SUFFIX,grazie.aws.intellij.net
+HOST-SUFFIX,jetbrains.ai
 
-# Meta AI
-DOMAIN, imagine.meta.com
-DOMAIN-SUFFIX, meta.ai
+# ===== Meta AI =====
+HOST,imagine.meta.com
+HOST-SUFFIX,meta.ai
 
-# Perplexity AI
-DOMAIN-SUFFIX, pplx.ai
-DOMAIN-SUFFIX, perplexity.ai
-DOMAIN-SUFFIX, perplexity.com
+# ===== Perplexity =====
+HOST-SUFFIX,pplx.ai
+HOST-SUFFIX,perplexity.ai
+HOST-SUFFIX,perplexity.com
 
-# Mistral AI
-DOMAIN, chat.mistral.ai
-DOMAIN, console.mistral.ai
-DOMAIN-SUFFIX, mistral.ai
+# ===== Mistral =====
+HOST,chat.mistral.ai
+HOST,console.mistral.ai
+HOST-SUFFIX,mistral.ai
 
-# Grok AI
-DOMAIN, api.x.ai
-DOMAIN-SUFFIX, x.ai
-DOMAIN-SUFFIX, grok.com
+# ===== Grok =====
+HOST,api.x.ai
+HOST-SUFFIX,x.ai
+HOST-SUFFIX,grok.com
 
-# Trae AI
-DOMAIN, trae-api-sg.mchost.guru
-DOMAIN-SUFFIX, trae.ai
+# ===== Trae =====
+HOST,trae-api-sg.mchost.guru
+HOST-SUFFIX,trae.ai
