@@ -10,7 +10,7 @@
 #############################################
 
 
-[Rule]
+# [Rule]
 # OpenAI ChatGPT
 DOMAIN-KEYWORD,chatgpt-async-webps-prod-,proxy
 DOMAIN-KEYWORD,openaicom-api-,proxy
