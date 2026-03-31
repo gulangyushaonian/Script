@@ -69,7 +69,7 @@ DOMAIN-SUFFIX,claude.com,proxy
 DOMAIN-SUFFIX,clau.de,proxy
 DOMAIN-SUFFIX,claudeusercontent.com,proxy
 IP-CIDR,160.79.104.0/23,proxy
-IP-CIDR6,2607:6bc0::/48,proxy
+IP6-CIDR,2607:6bc0::/48,proxy
 
 # JetBrains AI
 DOMAIN-SUFFIX,grazie.ai,proxy
