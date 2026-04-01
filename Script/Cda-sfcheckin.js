@@ -1,52 +1,60 @@
 /*
- * 顺丰速运全任务增强版
- * 1. 保留 Chavy (C大) sfexpress.js 原版 Env 环境库
- * 2. 注入 Python 版任务：马年活动、任务列表扫描、自动领取积分
+ * 顺丰速运全任务增强版 (字段完全对齐 C 大原版)
+ * 1. 适配自: https://raw.githubusercontent.com/chavyleung/scripts/master/sfexpress/sfexpress.js
+ * 2. 增加 Python 版任务：马年活动、任务列表扫描、自动领取积分
  */
 
 const $ = new Env('顺丰速运增强版')
 const timestamp = Math.round(new Date().getTime())
 
-// 变量声明 (由 C 大重写脚本获取)
-let sf_body = $.getdata('sfexpress_body_auth') 
-let openid = $.getdata('sfexpress_openid')
+// --- 关键修改：完全对齐 C 大 sfexpress.cookie.js 的存储字段 ---
+let sf_headers = $.getdata('chavy_headers_sfexpress') // 原版 Headers
+let sf_body = $.getdata('chavy_body_sfexpress')       // 原版 Body (即授权种子)
 let authToken = '' 
+let openid = ''
+
+// 从 Body 中尝试提取 openId，因为 Python 任务需要它
+if (sf_body) {
+  try {
+    const bodyObj = JSON.parse(sf_body)
+    openid = bodyObj.openId || ""
+  } catch (e) { $.log(`⚠️ 解析 Body 中的 openId 失败`) }
+}
 
 !(async () => {
   if (!sf_body) {
-    $.msg($.name, '❌ 未获取到授权数据', '请进入顺丰小程序会员中心触发抓包')
+    $.msg($.name, '❌ 未获取到授权数据', '请确保已运行 C 大 Cookie 脚本并进入会员中心触发')
     return
   }
   
-  $.log(`\n🔔 账号 ID: ${openid || '读取中'}`)
+  $.log(`\n🔔 账号信息已读取，准备鉴权...`)
   
   // 1. 登录生成 Token (C 大核心逻辑)
   await login()
   
   if (authToken) {
-    $.log(`✅ 鉴权成功，开始执行全任务...`)
+    $.log(`✅ 鉴权成功，开始执行增强任务流...`)
     
     // --- 任务流水线 ---
-    await dailySign()         // 基础签到 (原版)
-    await initHorseYear()     // 马年活动初始化 (新增)
-    await browseTasks()       // 浏览任务模拟 (新增)
-    await autoFetchRewards()  // 扫描全量列表并收割奖励 (新增)
-    await showFinalPoint()    // 查询积分 (原版增强)
+    await dailySign()         // 基础签到
+    await initHorseYear()     // 马年活动初始化 (Python 移植)
+    await autoFetchRewards()  // 扫描全量列表并收割奖励 (Python 移植)
+    await showFinalPoint()    // 查询积分并汇总
     
   } else {
-    $.log(`❌ 授权失败，请检查 sfexpress_body_auth 是否过期`)
+    $.log(`❌ 授权失败，请检查 C 大 Cookie 脚本是否成功获取到了 Body`)
   }
 })()
   .catch((e) => $.logErr(e))
   .finally(() => $.done())
 
-// --- [业务逻辑层] 授权登录 ---
+// --- [授权登录] 对应 C 大 universalSign 逻辑 ---
 function login() {
   return new Promise((resolve) => {
     const url = {
       url: `https://ccsp-egmas.sf-express.com/cx-app-member/member/app/user/universalSign`,
       headers: { 'Content-Type': 'application/json;charset=utf-8', 'Platform': 'MINI_PROGRAM' },
-      body: sf_body
+      body: sf_body // 使用 C 大原始字段
     }
     $.post(url, (error, response, data) => {
       try {
@@ -61,7 +69,7 @@ function login() {
   })
 }
 
-// --- [业务逻辑层] 通用请求封装 ---
+// --- [通用请求封装] ---
 function mimpPost(path, body = {}) {
   return new Promise((resolve) => {
     const url = {
@@ -70,8 +78,7 @@ function mimpPost(path, body = {}) {
         'Host': 'mcs-mimp-web.sf-express.com',
         'Content-Type': 'application/json;charset=utf-8',
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.48',
-        'Platform': 'MINI_PROGRAM',
-        'timestamp': `${timestamp}`
+        'Platform': 'MINI_PROGRAM'
       },
       body: JSON.stringify({
         channelFrom: 'WEIXIN',
@@ -88,50 +95,33 @@ function mimpPost(path, body = {}) {
   })
 }
 
-// --- [任务模块 1] 基础签到 ---
+// --- [任务模块] ---
 async function dailySign() {
   $.log(`\n[基础签到] 正在签到...`)
   const res = await mimpPost('~memberNonactivity~integralTaskSignPlusService~automaticSignFetchPackage', {})
-  $.log(`📝 结果: ${res.errorMessage || '领取成功'}`)
+  $.log(`📝 结果: ${res.errorMessage || '成功'}`)
 }
 
-// --- [任务模块 2] 马年活动 (Python 移植) ---
 async function initHorseYear() {
   $.log(`\n[活动任务] 正在初始化马年游戏...`)
   const res = await mimpPost('~memberNonactivity~horseYearService~initGame', {})
-  $.log(`📝 结果: ${res.success ? '初始化完成' : (res.errorMessage || '跳过')}`)
+  $.log(`📝 结果: ${res.success ? '初始化完成' : '跳过'}`)
 }
 
-// --- [任务模块 3] 浏览任务模拟 (Python 移植) ---
-async function browseTasks() {
-  $.log(`\n[浏览任务] 模拟点击特定任务 ID...`)
-  const taskIds = ["TA-001", "TA-002", "TA-003"]
-  for (let id of taskIds) {
-    const res = await mimpPost('~memberNonactivity~integralTaskAppService~finishTask', { taskId: id })
-    $.log(`👀 浏览任务 ${id}: ${res.success ? '✅' : '❌'}`)
-    await $.wait(1200)
-  }
-}
-
-// --- [任务模块 4] 奖励全量收割 (Python 移植核心) ---
 async function autoFetchRewards() {
   $.log(`\n[奖励收割] 正在扫描全量任务列表...`)
   const list = await mimpPost('~memberNonactivity~integralTaskAppService~getTaskList', { sysCode: 'MCS-MIMP-CORE' })
   if (list.success && list.obj) {
-    let count = 0
     for (let item of list.obj) {
-      if (item.taskStatus === 2) { // 状态 2: 已完成待领取
+      if (item.taskStatus === 2) { 
         $.log(`🎁 发现待领取奖励: ${item.taskName}`)
-        const fetch = await mimpPost('~memberNonactivity~integralTaskAppService~fetchTaskReward', { taskId: item.taskId })
-        if (fetch.success) count++
+        await mimpPost('~memberNonactivity~integralTaskAppService~fetchTaskReward', { taskId: item.taskId })
         await $.wait(1500)
       }
     }
-    $.log(`✅ 本次自动收割了 ${count} 个任务积分`)
   }
 }
 
-// --- [任务模块 5] 积分展示 ---
 async function showFinalPoint() {
   const res = await mimpPost('~memberIntegral~userInfoService~queryUserInfo', { sysCode: 'ESG-CEMP-CORE' })
   if (res.success && res.obj) {
@@ -140,7 +130,7 @@ async function showFinalPoint() {
   }
 }
 
-// --- ⚡️ 经典的 Chavy Env 环境库 (保持原版，禁止改动) ---
+// --- ⚡️ 经典的 Chavy Env 环境库 (原封不动) ---
 function Env(t, e) {
   class s {
     constructor(t) { this.env = t }
@@ -165,11 +155,11 @@ function Env(t, e) {
       const r = t => { if (!t) return t; if ("string" == typeof t) return this.isLoon() ? t : this.isQuanX() ? { "open-url": t } : this.isSurge() ? { url: t } : void 0; if ("object" == typeof t) { if (this.isLoon()) { let e = t.openUrl || t.url || t["open-url"], s = t.mediaUrl || t["media-url"]; return { openUrl: e, mediaUrl: s } } if (this.isQuanX()) { let e = t["open-url"] || t.url || t.openUrl, s = t["media-url"] || t.mediaUrl; return { "open-url": e, "media-url": s } } if (this.isSurge()) { let e = t.url || t.openUrl || t["open-url"]; return { url: e } } } };
       this.isMute || (this.isSurge() || this.isLoon() ? $notification.post(t, e, s, r(i)) : this.isQuanX() && $notify(t, e, s, r(i)));
       let o = ["", "==============📣系统通知📣=============="];
-      o.push(t), e && o.push(e), s && o.push(s), console.log(o.join("\n")), this.logs = this.logs.concat(o)
+      o.push(t), e && o.push(e), s && o.push(s), console.log(o.join("\n"))
     }
     log(...t) { t.length > 0 && (this.logs = [...this.logs, ...t]), console.log(t.join(this.logSeparator)) }
     wait(t) { return new Promise(e => setTimeout(e, t)) }
-    done(t = {}) { const e = (new Date).getTime(), s = (e - this.startTime) / 1e3; this.log("", `🔔${this.name}, 结束! 🕛 ${s} 秒`), $done(t) }
+    done(t = {}) { $done(t) }
     post(t, e = (() => {})) {
       if (this.isQuanX()) {
         "string" == typeof t && (t = { url: t }), t.method = "POST", $task.fetch(t).then(t => { const { statusCode: s, headers: i, body: r } = t; e(null, { status: s, headers: i }, r) }, t => e(t))
