@@ -2,36 +2,60 @@ const $ = new Env('顺丰速运')
 $.KEY_login = 'chavy_login_sfexpress'
 
 !(async () => {
-  await loginapp()
-  await $.wait('1000')
-  await loginweb()
-  await $.wait('1000')
-  await sign()
-  await $.wait('1000')
-  await signDailyTasks()
-  await $.wait('1000')
-  // ✅ 新增活动（来自Python）
-  await extraActivities()
-  showmsg()
+  // 读取账号数组
+  const accounts = $.getjson($.KEY_login) || []
+  const results = []
+
+  for (let i = 0; i < accounts.length; i++) {
+    const acc = accounts[i]
+    $.currentAccount = acc
+    $.currentUserId = getUserId(acc)
+
+    try {
+      await loginApp(acc)
+      await $.wait(1000)
+      await loginWeb()
+      await $.wait(1000)
+      await sign()
+      await $.wait(1000)
+      await signDailyTasks()
+      results.push(formatMsg($.currentUserId))
+    } catch (e) {
+      console.log(`账号 ${$.currentUserId} 出错:`, e)
+      results.push(`账号 ${$.currentUserId} 出错: ${e}`)
+    }
+  }
+
+  // 输出多账号结果
+  $.msg($.name, `签到结果 - 共${accounts.length}个账号`, results.join('\n\n'))
 })()
   .catch((e) => $.logErr(e))
   .finally(() => $.done())
 
-function loginapp() {
-  const loginOpts = $.getjson($.KEY_login)
-  delete loginOpts.headers.Cookie
-
-  return $.http
-    .post(loginOpts)
-    .then((resp) => {
-      $.login = JSON.parse(resp.body)
-    })
-    .catch((err) => {
-      console.log(err)
-    })
+// ------------------------------------
+// 工具函数
+// ------------------------------------
+function getUserId(account) {
+  let uid = ''
+  try {
+    const bodyObj = JSON.parse(account.body || '{}')
+    uid = bodyObj.userId || ''
+  } catch (e) {}
+  if (!uid && account.headers) {
+    uid = account.headers.memberId || ''
+  }
+  return uid
 }
 
-function loginweb() {
+function loginApp(account) {
+  const loginOpts = { ...account }
+  delete loginOpts.headers.Cookie // 防止带旧Cookie
+  return $.http.post(loginOpts).then((resp) => {
+    $.login = JSON.parse(resp.body)
+  })
+}
+
+function loginWeb() {
   const sign = encodeURIComponent($.login.obj.sign)
   const loginOpts = {
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/share/app/shareRedirect?sign=${sign}&source=SFAPP&bizCode=647@RnlvejM1R3VTSVZ6d3BNaXJxRFpOUVVtQkp0ZnFpNDBKdytobm5TQWxMeHpVUXVrVzVGMHVmTU5BVFA1bXlwcw==`
@@ -43,9 +67,7 @@ function sign() {
   const signOpts = {
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskSignPlusService~automaticSignFetchPackage`,
     body: `{"comeFrom": "vioin", "channelFrom": "SFAPP"}`,
-    headers: {
-      'Content-Type': 'application/json'
-    }
+    headers: { 'Content-Type': 'application/json' }
   }
   return $.http.post(signOpts).then((resp) => {
     $.sign = JSON.parse(resp.body)
@@ -53,34 +75,22 @@ function sign() {
 }
 
 function queryDailyTask() {
-  return $.http
-    .post({
-      url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskStrategyService~queryPointTaskAndSignFromES`,
-      body: `{"channelType":"1"}`,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    })
-    .then((resp) => {
-      $.tasks = JSON.parse(resp.body).obj.taskTitleLevels
-    })
+  return $.http.post({
+    url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskStrategyService~queryPointTaskAndSignFromES`,
+    body: `{"channelType":"1"}`,
+    headers: { 'Content-Type': 'application/json' }
+  }).then((resp) => {
+    $.tasks = JSON.parse(resp.body).obj.taskTitleLevels
+  })
 }
 
 async function signDailyTasks() {
   await queryDailyTask()
-
-  for (let i = 0; i < $.tasks.length; i++) {
-    const task = $.tasks[i]
-    if (task.status === 1) {
-      await getPoint(task)
-    } else if (task.status === 2) {
-      await doTask(task)
-      await getPoint(task)
-    } else if (task.status === 3) {
-      task.result = '积分已领取！'
-    } else {
-      task.result = '未知'
-    }
+  for (let task of $.tasks) {
+    if (task.status === 1) await getPoint(task)
+    else if (task.status === 2) { await doTask(task); await getPoint(task) }
+    else if (task.status === 3) task.result = '积分已领取！'
+    else task.result = '未知'
   }
 }
 
@@ -92,131 +102,42 @@ function doTask(task) {
   })
 }
 
-
-
-
 function getPoint(task) {
-  return $.http
-    .post({
-      url: 'https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskStrategyService~fetchIntegral',
-      body: `{"strategyId":${task.strategyId},"taskId":"${task.taskId}","taskCode":"${task.taskCode}","channelType":"1"}`,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    })
-    .then((resp) => {
-      const data = JSON.parse(resp.body)
-      task.result = data.success ? '成功' : data.errorMessage
-    })
+  return $.http.post({
+    url: 'https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskStrategyService~fetchIntegral',
+    body: `{"strategyId":${task.strategyId},"taskId":"${task.taskId}","taskCode":"${task.taskCode}","channelType":"1"}`,
+    headers: { 'Content-Type': 'application/json' }
+  }).then((resp) => {
+    const data = JSON.parse(resp.body)
+    task.result = data.success ? '成功' : data.errorMessage
+  })
 }
 
-function showmsg() {
+// 格式化单账号签到结果
+function formatMsg(userId) {
   const success = $.sign && $.sign.success
-  $.subt = `签到: `
-  $.desc = []
+  let subt = `账号 ${userId} - 签到: `
+  let desc = []
+
   if (success) {
-    if ($.sign.obj.hasFinishSign){
-      $.subt += `重复`
-      $.desc.push(`说明: 连续签到${$.sign.obj.countDay}天`)
+    if ($.sign.obj.hasFinishSign) {
+      subt += '重复'
+      desc.push(`说明: 连续签到${$.sign.obj.countDay}天`)
     } else {
-      $.subt += `成功`
-      $.desc.push(`说明: 连续签到${$.sign.obj.countDay}天`)
+      subt += '成功'
+      desc.push(`说明: 连续签到${$.sign.obj.countDay}天`)
     }
   } else {
-    const errmsg = $.sign.errorMessage
-    $.subt += `失败`
-    $.desc.push(`说明: ${errmsg}`)
+    subt += '失败'
+    desc.push(`说明: ${$.sign?.errorMessage || '未知错误'}`)
   }
 
-  $.desc.push('', `每日任务: `)
-  for (let i = 0; i < $.tasks.length; i++) {
-    const name = $.tasks[i].title
-    const result = $.tasks[i].result
-    $.desc.push(`${name}: ${result}`)
+  desc.push('', '每日任务:')
+  for (let task of $.tasks) {
+    desc.push(`${task.title}: ${task.result}`)
   }
 
-  $.msg($.name, $.subt, $.desc.join('\n'))
-}
-
-// ================= 新增活动入口 =================
-
-async function extraActivities() {
-
-  $.log('开始执行扩展活动...')
-// 构造统一的活动 Headers，解决 illegal.operation.type 报错
-  $.activityHeaders = {
-    'Content-Type': 'application/json',
-    'syscode': 'MCS-MIMP-CORE',
-    'channel': 'SFAPP',
-    'Accept': '*/*',
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
-  }
-  
-  await yearEnd2025()      // 年终活动
-  await $.wait(1000)
-  await memberDayTask()    // 会员日活动
-}
-async function yearEnd2025() {
-  $.log('🔍 检查年终活动...')
-  try {
-    let res = await $.http.post({
-      url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/yearEnd2025/taskList`,
-      body: `{}`,
-      headers: $.activityHeaders
-    })
-    let data = $.toObj(res.body)
-    if (!data || !data.success) return $.log(`❌ 年终活动不可用: ${data?.errorMessage || '网络错误'}`)
-
-    for (let t of (data.obj || [])) {
-      if (t.status === 2) {
-        $.log(`  👉 任务: ${t.taskName || t.taskCode}`)
-        await $.http.post({
-          url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonRoutePost/yearEnd2025/finishTask`,
-          body: JSON.stringify({ "taskCode": t.taskCode }),
-          headers: $.activityHeaders
-        })
-        await $.wait(1500)
-      }
-      if (t.status === 1 || t.status === 2) {
-        let rw = await $.http.post({
-          url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/yearEnd2025/reward`,
-          body: JSON.stringify({ "taskCode": t.taskCode }),
-          headers: $.activityHeaders
-        })
-        if ($.toObj(rw.body).success) $.log(`  ✅ 奖励领取成功`)
-      }
-    }
-  } catch (e) { $.log('❌ 年终活动异常') }
-}
-
-async function memberDayTask() {
-  $.log('🔍 检查会员日活动...')
-  try {
-    let res = await $.http.post({
-      url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/memberDay/taskList`,
-      body: `{}`,
-      headers: $.activityHeaders
-    })
-    let data = $.toObj(res.body)
-    if (!data || !data.success) return $.log('ℹ️ 会员日当前无活动')
-
-    for (let t of (data.obj || [])) {
-      if (t.status === 2) {
-        $.log(`  👉 会员日任务: ${t.taskCode}`)
-        await $.http.post({
-          url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonRoutePost/memberDay/finishTask`,
-          body: JSON.stringify({ "taskCode": t.taskCode }),
-          headers: $.activityHeaders
-        })
-        await $.wait(1000)
-        await $.http.post({
-          url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/memberDay/reward`,
-          body: JSON.stringify({ "taskCode": t.taskCode }),
-          headers: $.activityHeaders
-        })
-      }
-    }
-  } catch (e) { $.log('❌ 会员日异常') }
+  return `${subt}\n${desc.join('\n')}`
 }
 
 // prettier-ignore
