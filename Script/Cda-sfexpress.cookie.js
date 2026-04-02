@@ -7,65 +7,56 @@ $.KEY_login = 'chavy_login_sfexpress'
   session.body = $request.body
   session.headers = $request.headers
 
-  // 👉 尝试从body或headers提取 userId（根据实际接口调整）
+  // ✅ 提取 userId
   let userId = ''
   try {
     const bodyObj = JSON.parse(session.body || '{}')
-    userId = bodyObj.userId || bodyObj.user_id || ''
+    userId = bodyObj.userId || ''
   } catch (e) {}
 
   if (!userId && session.headers) {
-    userId =
-      session.headers['userId'] ||
-      session.headers['userid'] ||
-      session.headers['User-Id'] ||
-      ''
+    userId = session.headers.memberId || ''
   }
 
   if (!userId) {
     console.log('❌ 未获取到 userId，无法去重')
   }
 
-  // 👉 读取已有数据
-  let data = $.getdata($.KEY_login)
+  // ✅ 读取已有账号列表
   let list = []
-
-  if (data) {
+  const oldData = $.getdata($.KEY_login)
+  if (oldData) {
     try {
-      list = JSON.parse(data)
+      list = JSON.parse(oldData)
     } catch (e) {
       list = []
     }
   }
 
-  // 👉 去重逻辑（按 userId）
+  // ✅ 去重逻辑：相同 userId 替换
   let updated = false
   if (userId) {
     for (let i = 0; i < list.length; i++) {
       let oldUserId = ''
       try {
         const oldBody = JSON.parse(list[i].body || '{}')
-        oldUserId = oldBody.userId || oldBody.user_id || ''
+        oldUserId = oldBody.userId || ''
       } catch (e) {}
 
-      if (
-        oldUserId === userId ||
-        list[i].headers?.userId === userId ||
-        list[i].headers?.userid === userId
-      ) {
-        list[i] = session // 👉 替换整组
+      if (oldUserId === userId) {
+        list[i] = session // 替换整组 session
         updated = true
         break
       }
     }
   }
 
-  // 👉 不存在则新增
+  // ✅ 如果不存在则新增
   if (!updated) {
     list.push(session)
   }
 
-  // 👉 保存
+  // ✅ 保存
   if ($.setdata(JSON.stringify(list), $.KEY_login)) {
     $.subt = updated
       ? `更新账号成功 (userId: ${userId})`
