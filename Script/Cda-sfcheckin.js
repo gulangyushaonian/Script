@@ -143,93 +143,80 @@ function showmsg() {
 async function extraActivities() {
 
   $.log('开始执行扩展活动...')
-
+// 构造统一的活动 Headers，解决 illegal.operation.type 报错
+  $.activityHeaders = {
+    'Content-Type': 'application/json',
+    'syscode': 'MCS-MIMP-CORE',
+    'channel': 'SFAPP',
+    'Accept': '*/*',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+  }
+  
   await yearEnd2025()      // 年终活动
+  await $.wait(1000)
   await memberDayTask()    // 会员日活动
 }
-
-// ================= Python迁移：年终活动 =================
 async function yearEnd2025() {
-  $.log('🔍 检查年终活动...');
+  $.log('🔍 检查年终活动...')
   try {
-    const url = `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/yearEnd2025/taskList`;
-    // 注意：一定要 return 这个 promise，或者使用 await
-    let taskRes = await $.http.post({
-      url: url,
+    let res = await $.http.post({
+      url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/yearEnd2025/taskList`,
       body: `{}`,
-      headers: {
-        'Content-Type': 'application/json',
-        'Referer': 'https://mcs-mimp-web.sf-express.com/yearEnd2025/',
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.20'
-      }
-    });
+      headers: $.activityHeaders
+    })
+    let data = $.toObj(res.body)
+    if (!data || !data.success) return $.log(`❌ 年终活动不可用: ${data?.errorMessage || '网络错误'}`)
 
-    if (!taskRes || !taskRes.body) return $.log('❌ 年终活动请求失败');
-    
-    let data = $.toObj(taskRes.body);
-    if (!data.success) return $.log(`❌ 年终活动: ${data.errorMessage || '未开启'}`);
-
-    let tasks = data.obj || [];
-    for (let t of tasks) {
-      // status 2 通常是待完成，1 是待领取，3 是已完成
+    for (let t of (data.obj || [])) {
       if (t.status === 2) {
-        $.log(`  👉 正在做任务: ${t.taskName || t.taskCode}`);
+        $.log(`  👉 任务: ${t.taskName || t.taskCode}`)
         await $.http.post({
           url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonRoutePost/yearEnd2025/finishTask`,
-          body: JSON.stringify({ "taskCode": t.taskCode })
-        });
-        await $.wait(2000); // 增加随机等待，防止风控
+          body: JSON.stringify({ "taskCode": t.taskCode }),
+          headers: $.activityHeaders
+        })
+        await $.wait(1500)
       }
-      
-      // 重新检查或尝试领奖
       if (t.status === 1 || t.status === 2) {
-        let rewardRes = await $.http.post({
+        let rw = await $.http.post({
           url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/yearEnd2025/reward`,
           body: JSON.stringify({ "taskCode": t.taskCode }),
-          headers: { 'Content-Type': 'application/json' }
-        });
-        let rData = $.toObj(rewardRes.body);
-        if (rData.success) $.log(`  ✅ 奖励领取成功: ${t.taskCode}`);
+          headers: $.activityHeaders
+        })
+        if ($.toObj(rw.body).success) $.log(`  ✅ 奖励领取成功`)
       }
     }
-  } catch (e) {
-    $.logErr(e);
-  }
+  } catch (e) { $.log('❌ 年终活动异常') }
 }
 
-// ================= Python迁移：会员日 =================
 async function memberDayTask() {
-  $.log('🔍 检查会员日活动...');
+  $.log('🔍 检查会员日活动...')
   try {
     let res = await $.http.post({
       url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/memberDay/taskList`,
       body: `{}`,
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    let data = $.toObj(res.body);
-    if (!data || !data.success) return $.log('❌ 会员日活动未开启或请求失败');
+      headers: $.activityHeaders
+    })
+    let data = $.toObj(res.body)
+    if (!data || !data.success) return $.log('ℹ️ 会员日当前无活动')
 
     for (let t of (data.obj || [])) {
       if (t.status === 2) {
-        $.log(`  👉 会员日任务: ${t.taskCode}`);
+        $.log(`  👉 会员日任务: ${t.taskCode}`)
         await $.http.post({
           url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonRoutePost/memberDay/finishTask`,
-          body: JSON.stringify({ "taskCode": t.taskCode })
-        });
-        await $.wait(1000);
-        
-        let rw = await $.http.post({
+          body: JSON.stringify({ "taskCode": t.taskCode }),
+          headers: $.activityHeaders
+        })
+        await $.wait(1000)
+        await $.http.post({
           url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/memberDay/reward`,
           body: JSON.stringify({ "taskCode": t.taskCode }),
-          headers: { 'Content-Type': 'application/json' }
-        });
-        if ($.toObj(rw.body).success) $.log(`  ✅ 会员日奖励领取成功`);
+          headers: $.activityHeaders
+        })
       }
     }
-  } catch (e) {
-    $.logErr(e);
-  }
+  } catch (e) { $.log('❌ 会员日异常') }
 }
 
 // prettier-ignore
