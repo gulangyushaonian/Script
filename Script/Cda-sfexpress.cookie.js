@@ -2,59 +2,80 @@ const $ = new Env('顺丰速运')
 $.KEY_login = 'chavy_login_sfexpress'
 
 !(async () => {
-  const session = {
-    url: $request.url,
-    body: $request.body,
-    headers: $request.headers
-  }
+  const session = {}
+  session.url = $request.url
+  session.body = $request.body
+  session.headers = $request.headers
 
-  // 1. 获取已存储的账号列表 (数组)
-  let sessions = $.getjson($.KEY_login, [])
-  
-  // 2. 提取当前抓包数据的唯一标识 (这里假设 body 里有 userId，如果没有，可以改为提取 header 里的某个 token)
-  // 顺丰通常在 body 是 JSON 字符串，尝试解析它
-  let currentUserId = ""
+  // 👉 尝试从body或headers提取 userId（根据实际接口调整）
+  let userId = ''
   try {
-    const bodyObj = JSON.parse(session.body)
-    currentUserId = bodyObj.userId || bodyObj.mobile || "" 
-  } catch (e) {
-    // 如果 body 不是 JSON，尝试从 header 或 URL 匹配一个特征作为唯一标识
-    currentUserId = session.headers['x-auth-token'] || "" 
+    const bodyObj = JSON.parse(session.body || '{}')
+    userId = bodyObj.userId || bodyObj.user_id || ''
+  } catch (e) {}
+
+  if (!userId && session.headers) {
+    userId =
+      session.headers['userId'] ||
+      session.headers['userid'] ||
+      session.headers['User-Id'] ||
+      ''
   }
 
-  if (!currentUserId) {
-    $.log(`⚠️ 未能提取到唯一用户标识，放弃存储以防数据紊乱`)
-    return
+  if (!userId) {
+    console.log('❌ 未获取到 userId，无法去重')
   }
 
-  // 3. 处理重复逻辑
-  let foundIndex = sessions.findIndex(item => {
+  // 👉 读取已有数据
+  let data = $.getdata($.KEY_login)
+  let list = []
+
+  if (data) {
     try {
-      const oldBody = JSON.parse(item.body)
-      return (oldBody.userId || oldBody.mobile) === currentUserId
+      list = JSON.parse(data)
     } catch (e) {
-      return false
+      list = []
     }
-  })
-
-  if (foundIndex !== -1) {
-    // 发现重复，替换旧数据
-    sessions[foundIndex] = session
-    $.subt = `更新账号: ${currentUserId} 成功!`
-  } else {
-    // 新账号，追加
-    sessions.push(session)
-    $.subt = `新增账号: ${currentUserId} 成功! (当前共 ${sessions.length} 个)`
   }
 
-  // 4. 持久化存储
-  if ($.setjson(sessions, $.KEY_login)) {
-    $.msg($.name, $.subt, `数据已存入 ${$.KEY_login}`)
-    console.log(JSON.stringify(session))
-  } else {
-    $.msg($.name, `获取会话失败`, `存储过程出现异常`)
+  // 👉 去重逻辑（按 userId）
+  let updated = false
+  if (userId) {
+    for (let i = 0; i < list.length; i++) {
+      let oldUserId = ''
+      try {
+        const oldBody = JSON.parse(list[i].body || '{}')
+        oldUserId = oldBody.userId || oldBody.user_id || ''
+      } catch (e) {}
+
+      if (
+        oldUserId === userId ||
+        list[i].headers?.userId === userId ||
+        list[i].headers?.userid === userId
+      ) {
+        list[i] = session // 👉 替换整组
+        updated = true
+        break
+      }
+    }
   }
 
+  // 👉 不存在则新增
+  if (!updated) {
+    list.push(session)
+  }
+
+  // 👉 保存
+  if ($.setdata(JSON.stringify(list), $.KEY_login)) {
+    $.subt = updated
+      ? `更新账号成功 (userId: ${userId})`
+      : `新增账号成功 (userId: ${userId})`
+  } else {
+    $.subt = `保存失败`
+  }
+
+  console.log(JSON.stringify(list, null, 2))
+  $.msg($.name, $.subt, `当前共 ${list.length} 个账号`)
 })()
   .catch((e) => $.logErr(e))
   .finally(() => $.done())
