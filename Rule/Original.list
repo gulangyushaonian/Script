@@ -28,7 +28,6 @@ host, ad.12306.cn, direct
 host-suffix, tiktokv.us, proxy
 host, fr.yuhengy17.me, direct
 host-keyword, httpdns.calorietech.com, reject
-host, chatgpt.com, OPENAI
 host-wildcard, app-measurement.com, proxy
 host-keyword, netmarble.com, proxy
 HOST-SUFFIX,admobile.top,REJECT
@@ -39,7 +38,6 @@ HOST-KEYWORD,stat6.ptqqmusic.gitv.tv,PROXY
 HOST-KEYWORD,baozimh.org,PROXY
 HOST-KEYWORD,qiman59.com,PROXY
 HOST-KEYWORD,dmit.io,PROXY
-HOST-KEYWORD,claude.ai,OPENAI
 HOST-KEYWORD,libgen.is,PROXY
 host-keyword, bing.com, proxy
 HOST-KEYWORD,bz.godamanga.art,PROXY
