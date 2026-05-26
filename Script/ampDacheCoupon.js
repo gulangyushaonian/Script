@@ -70,7 +70,7 @@ var message1 = ''; // 用于收集所有账号的通知内容
             let checkRes = await checkIn();
             if (checkRes && checkRes.code == 1) {
                 let rushList = checkRes.data?.rushBuyList || [];
-                let target = rushList.find(item => item.title.includes("5元"));
+                let target = rushList.find(item => item.title.includes("打车秒杀5元"));
 
                 if (target) {
                     console.log(`✅ 找到: ${target.title} | 状态: ${target.buttonText}`);
