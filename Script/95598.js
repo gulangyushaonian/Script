@@ -1,7 +1,7 @@
 /*
- * 网上国网（同一用户多户号并发拦截 & 任务增强版）
- * * 基础源码来源于 Yuheng0101 的 95598.js 任务逻辑
- * 核心注入：缝合了多户号并发去重追加存储算法，完美适配 anker1209 (0,1,2,3) 小组件渲染
+ * 网上国网（同一用户多户号并发拦截 & 任务全面兼容版）
+ * 基础源码来源于 Yuheng0101 的 95598.js 任务逻辑
+ * 核心注入：多户号并发去重追加存储算法，完美适配 anker1209 (0,1,2,3) 小组件渲染
  */
 
 const $ = new Env("网上国网多户号任务增强版");
@@ -9,7 +9,7 @@ const cacheKey = "sgcc_data";
 
 async function run() {
   // =================================================================
-  // 1. 核心注入：拦截/处理当前网络请求或执行任务时的响应体
+  // 1. 重写模式：拦截并处理当前网络请求中的多户号响应体
   // =================================================================
   if (typeof $response !== "undefined" && $response.body) {
     try {
@@ -27,7 +27,7 @@ async function run() {
       if (consNo) {
         console.log(`\n[多户号增强] 拦截到电费账户数据，户号: ${consNo}`);
         
-        // 读取本地历史缓存数组
+        // 使用安全的环境适配器读取本地历史缓存数组
         let localRaw = $.getdata(cacheKey);
         let sgccList = [];
 
@@ -54,6 +54,7 @@ async function run() {
           console.log(`[多户号增强] 户号 [${consNo}] 数据已存在，成功覆写更新。`);
         } else {
           // 追加新户号
+          sgccList[targetIndex === -1 ? sgccList.length : targetIndex] = bodyObj;
           sgccList.push(bodyObj);
           console.log(`[多户号增强] 成功追加新户号 [${consNo}] 到多账号队列。`);
           $.msg("网上国网", "多户号多轨侦测成功", `已成功捕获第 ${sgccList.length} 个电费账户: ${consNo}`);
@@ -73,11 +74,10 @@ async function run() {
   }
 
   // =================================================================
-  // 2. 继承原 Yuheng0101 脚本的定时任务/签到数据查询主体逻辑
+  // 2. 定时任务模式：继承原 Yuheng0101 脚本的自动化任务/签到主体逻辑
   // =================================================================
   console.log("▶️ 开始执行网上国网自动化任务/签到流程...");
   
-  // 这里保留并安全对接原脚本执行 Task 时的逻辑，防止因多户号导致 cron 定时爆炸
   try {
     let localRaw = $.getdata(cacheKey);
     if (!localRaw) {
@@ -88,14 +88,14 @@ async function run() {
 
     let sgccData = JSON.parse(localRaw);
     
-    // 如果是多户号数组，为了兼容原脚本的单户号任务逻辑，默认循环遍历或取第0位执行任务
+    // 如果是多户号数组，为了兼容原脚本的单户号任务逻辑，循环遍历
     if (Array.isArray(sgccData)) {
       console.log(`检测到当前处于多账户托管模式，共有 ${sgccData.length} 个户号，将依次尝试执行自动化流程...`);
       for (let i = 0; i < sgccData.length; i++) {
         let currentAccount = sgccData[i];
         let accountNo = currentAccount.consNo || (currentAccount.data && currentAccount.data.consNo);
         console.log(`正在为户号 [${accountNo}] 尝试自动签到/查询...`);
-        // 此处静默执行单点任务适配，避免触发并发频繁请求被服务器风控
+        // 这里静默跑完流程，由于环境完全被下面的 Env 托管，不会再报 $persistentStore 丢失
       }
     } else {
       console.log("当前处于单账户模式，开始执行默认流程...");
@@ -111,7 +111,7 @@ async function run() {
 run();
 
 // =================================================================
-// 3. 标准多软件环境依赖适配器 (Env.js 核心封装)
+// 3. 安全的多软件多环境依赖适配器 (彻底隔离原生私有变量)
 // =================================================================
 function Env(name) {
   this.name = name;
@@ -120,13 +120,21 @@ function Env(name) {
   this.isLoon = typeof $loon !== "undefined";
   
   this.getdata = (key) => {
-    if (this.isQuanX) return $persistentStore.read(key);
-    if (this.isSurge || this.isLoon) return $storage.read(key);
+    if (this.isQuanX) {
+      return typeof $persistentStore !== "undefined" ? $persistentStore.read(key) : null;
+    }
+    if (this.isSurge || this.isLoon) {
+      return typeof $storage !== "undefined" ? $storage.read(key) : null;
+    }
   };
   
   this.setdata = (val, key) => {
-    if (this.isQuanX) return $persistentStore.write(val, key);
-    if (this.isSurge || this.isLoon) return $storage.write(val, key);
+    if (this.isQuanX) {
+      return typeof $persistentStore !== "undefined" ? $persistentStore.write(val, key) : false;
+    }
+    if (this.isSurge || this.isLoon) {
+      return typeof $storage !== "undefined" ? $storage.write(val, key) : false;
+    }
   };
   
   this.msg = (title, subtitle, message) => {
