@@ -1,4 +1,4 @@
-const VERSION = "v1.0.3_隔离版"
+const VERSION = "v1.0.4_核心隔离版"
 const $ = new Env(`顺丰速运 [${VERSION}]`)
 $.KEY_login = 'chavy_login_sfexpress'
 
@@ -13,17 +13,14 @@ $.KEY_login = 'chavy_login_sfexpress'
     $.currentMobile = getMobile(acc)
 
     // ========================================================
-    // ✨【核心修复】每次切换账号，彻底重置上一个账号留下的残留快照与 Cookie
+    // ✨【核心修复 1】每次切换账号，彻底重置上一个账号留下的残留快照
     // ========================================================
     $.login = null
     $.sign = null
     $.tasks = []
     
     if ($.ckjar && $.ckjar.removeAllCookiesSync) {
-      try { $.ckjar.removeAllCookiesSync() } catch (e) {} // 清理 Node CookieJar
-    }
-    if ($.initGotEnv) {
-      delete $.ckjar
+      try { $.ckjar.removeAllCookiesSync() } catch (e) {} // 尝试清理 Node 缓存
     }
     // ========================================================
 
@@ -77,7 +74,8 @@ function loginWeb() {
   }
   const sign = encodeURIComponent($.login.obj.sign)
   const loginOpts = {
-    url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/share/app/shareRedirect?sign=${sign}&source=SFAPP&bizCode=647@RnlvejM1R3VTSVZ6d3BNaXJxRFpOUVVtQkp0ZnFpNDBKdytobm5TQWxMeHpVUXVrVzVGMHVmTU5BVFA1bXlwcw==`
+    url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/share/app/shareRedirect?sign=${sign}&source=SFAPP&bizCode=647@RnlvejM1R3VTSVZ6d3BNaXJxRFpOUVVtQkp0ZnFpNDBKdytobm5TQWxMeHpVUXVrVzVGMHVmTU5BVFA1bXlwcw==`,
+    headers: { 'Cookie': '' } // ✨【核心修复 2】强行用空 Cookie 顶替并拦截上一个账号继承下来的全局隐藏 Cookie
   }
   return $.http.get(loginOpts)
 }
@@ -85,8 +83,8 @@ function loginWeb() {
 function sign() {
   const signOpts = {
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskSignPlusService~automaticSignFetchPackage`,
-    body: `{"comeFrom": "violet", "channelFrom": "SFAPP"}`,
-    headers: { 'Content-Type': 'application/json' }
+    body: `{"comeFrom": "vioin", "channelFrom": "SFAPP"}`,
+    headers: { 'Content-Type': 'application/json', 'Cookie': '' } // ✨ 拦截全局 Cookie 继承
   }
   return $.http.post(signOpts).then((resp) => {
     $.sign = JSON.parse(resp.body)
@@ -97,7 +95,7 @@ function queryDailyTask() {
   return $.http.post({
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskStrategyService~queryPointTaskAndSignFromES`,
     body: `{"channelType":"1"}`,
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json', 'Cookie': '' } // ✨ 拦截全局 Cookie 继承
   }).then((resp) => {
     try {
       const resObj = JSON.parse(resp.body)
@@ -123,7 +121,7 @@ function doTask(task) {
   return $.http.post({
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonRoutePost/memberEs/taskRecord/finishTask`,
     body: `{"taskCode":"${task.taskCode}"}`,
-    headers: {}
+    headers: { 'Cookie': '' } // ✨ 拦截全局 Cookie 继承
   })
 }
 
@@ -131,7 +129,7 @@ function getPoint(task) {
   return $.http.post({
     url: 'https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskStrategyService~fetchIntegral',
     body: `{"strategyId":${task.strategyId},"taskId":"${task.taskId}","taskCode":"${task.taskCode}","channelType":"1"}`,
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json', 'Cookie': '' } // ✨ 拦截全局 Cookie 继承
   }).then((resp) => {
     const data = JSON.parse(resp.body)
     task.result = data.success ? '成功' : data.errorMessage
