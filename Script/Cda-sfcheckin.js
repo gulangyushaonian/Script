@@ -1,4 +1,5 @@
-const $ = new Env('顺丰速运')
+const VERSION = "v1.0.3_隔离版"
+const $ = new Env(`顺丰速运 [${VERSION}]`)
 $.KEY_login = 'chavy_login_sfexpress'
 
 !(async () => {
@@ -12,21 +13,24 @@ $.KEY_login = 'chavy_login_sfexpress'
     $.currentMobile = getMobile(acc)
 
     // ========================================================
-    // ✨【核心修复】每次切换新账号时，彻底擦除上一个账号在底层留下的 Cookie 缓存
+    // ✨【核心修复】每次切换账号，彻底重置上一个账号留下的残留快照与 Cookie
     // ========================================================
+    $.login = null
+    $.sign = null
+    $.tasks = []
+    
     if ($.ckjar && $.ckjar.removeAllCookiesSync) {
-      try { $.ckjar.removeAllCookiesSync() } catch (e) {} // 适配 Node.js 环境
+      try { $.ckjar.removeAllCookiesSync() } catch (e) {} // 清理 Node CookieJar
     }
     if ($.initGotEnv) {
-      // 强制让下一轮请求重新初始化干净的 cookieJar
       delete $.ckjar
     }
     // ========================================================
 
     try {
-      console.log(`\n➔ 开始执行第 ${i + 1} 个账号: ${$.currentMobile}`)
+      console.log(`\n➔ [${VERSION}] 开始执行第 ${i + 1} 个账号: ${$.currentMobile}`)
       await loginApp(acc)
-      await $.wait(1500) // 适当延长等待，更安全
+      await $.wait(1500)
       await loginWeb()
       await sign()
       await $.wait(1500)
@@ -67,6 +71,10 @@ function loginApp(account) {
 }
 
 function loginWeb() {
+  if (!$.login || !$.login.obj || !$.login.obj.sign) {
+    console.log(`⚠ 账号 ${$.currentMobile} APP登录凭证无效，跳过网页登录`)
+    return
+  }
   const sign = encodeURIComponent($.login.obj.sign)
   const loginOpts = {
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/share/app/shareRedirect?sign=${sign}&source=SFAPP&bizCode=647@RnlvejM1R3VTSVZ6d3BNaXJxRFpOUVVtQkp0ZnFpNDBKdytobm5TQWxMeHpVUXVrVzVGMHVmTU5BVFA1bXlwcw==`
@@ -77,7 +85,7 @@ function loginWeb() {
 function sign() {
   const signOpts = {
     url: `https://mcs-mimp-web.sf-express.com/mcs-mimp/commonPost/~memberNonactivity~integralTaskSignPlusService~automaticSignFetchPackage`,
-    body: `{"comeFrom": "vioin", "channelFrom": "SFAPP"}`,
+    body: `{"comeFrom": "violet", "channelFrom": "SFAPP"}`,
     headers: { 'Content-Type': 'application/json' }
   }
   return $.http.post(signOpts).then((resp) => {
@@ -91,12 +99,18 @@ function queryDailyTask() {
     body: `{"channelType":"1"}`,
     headers: { 'Content-Type': 'application/json' }
   }).then((resp) => {
-    $.tasks = JSON.parse(resp.body).obj.taskTitleLevels
+    try {
+      const resObj = JSON.parse(resp.body)
+      $.tasks = resObj?.obj?.taskTitleLevels || []
+    } catch(e) {
+      $.tasks = []
+    }
   })
 }
 
 async function signDailyTasks() {
   await queryDailyTask()
+  if (!$.tasks || $.tasks.length === 0) return
   for (let task of $.tasks) {
     if (task.status === 1) await getPoint(task)
     else if (task.status === 2) { await doTask(task); await getPoint(task) }
@@ -124,29 +138,33 @@ function getPoint(task) {
   })
 }
 
-// 格式化单账号签到结果，用手机号显示
+// 格式化单账号签到结果
 function formatMsg(account) {
   const mobile = getMobile(account)
   const success = $.sign && $.sign.success
   let subt = `账号 ${mobile} - 签到: `
   let desc = []
 
-  if (success) {
+  if (success && $.sign.obj) {
     if ($.sign.obj.hasFinishSign) {
       subt += '重复'
-      desc.push(`说明: 连续签到${$.sign.obj.countDay}天`)
+      desc.push(`说明: 连续签到${$.sign.obj.countDay || 0}天`)
     } else {
       subt += '成功'
-      desc.push(`说明: 连续签到${$.sign.obj.countDay}天`)
+      desc.push(`说明: 连续签到${$.sign.obj.countDay || 0}天`)
     }
   } else {
     subt += '失败'
-    desc.push(`说明: ${$.sign?.errorMessage || '未知错误'}`)
+    desc.push(`说明: ${$.sign?.errorMessage || '未成功获取到新账号数据或接口报错'}`)
   }
 
   desc.push('', '每日任务:')
-  for (let task of $.tasks) {
-    desc.push(`${task.title}: ${task.result}`)
+  if ($.tasks && $.tasks.length > 0) {
+    for (let task of $.tasks) {
+      desc.push(`${task.title}: ${task.result || '未执行'}`)
+    }
+  } else {
+    desc.push('无可用任务列表')
   }
 
   return `${subt}\n${desc.join('\n')}`
