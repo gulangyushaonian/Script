@@ -1,6 +1,6 @@
 const $ = new Env("小米抽奖");
 
-const SCRIPT_VERSION = "2026-07-13.multi_v1"; 
+const SCRIPT_VERSION = "2026-07-13.multi_v3"; 
 $.log(`[INFO] 脚本版本 ${SCRIPT_VERSION}`);
 
 const CK_KEY = "milottery_data";
@@ -14,25 +14,54 @@ if (typeof $request !== "undefined") {
 } else if (JSON.parse($.getdata("milottery_clear") || "false")) {
     $.setdata("", CK_KEY);
     $.setdata("false", "milottery_clear");
-    $.msg($.name, "", "✅ Cookie 已清除，请重新抓取");
+    $.msg($.name, "", "✅ Cookie 已全部清除成功");
     $.done();
 } else {
     run().finally(() => $.done());
 }
 
-// 提取能够唯一标识账号的特征串（优先找 userId 或 serviceToken，找不到则取整个 Cookie 排除干扰项后的 md5 简写）
-function getAccountFingerprint(cookieStr) {
-    if (!cookieStr) return "";
-    // 尝试匹配 userId=xxxx
-    const userIdMatch = cookieStr.match(/userId=([^;\s]+)/);
-    if (userIdMatch && userIdMatch[1]) return "uid_" + userIdMatch[1];
+// 智能提取登录特征：返回 { id: 用于唯一去重的凭证, name: 类似手机后4位或用户标识 }
+function parseAccountInfo(cookieStr) {
+    if (!cookieStr) return null;
+
+    // 1. 强力拦截未登录/黑名单/空壳标识
+    if (
+        cookieStr.includes("userId=;") || 
+        cookieStr.includes("userId=0;") || 
+        cookieStr.includes("userId=\"\"") ||
+        cookieStr.includes("XMGUEST") && !cookieStr.includes("serviceToken=")
+    ) {
+        return null;
+    }
+
+    // 获取合法 userId
+    const userIdMatch = cookieStr.match(/userId=([^;\s"'\x00-\x1F]+)/);
+    const userId = (userIdMatch && userIdMatch[1] && userIdMatch[1] !== "0") ? userIdMatch[1] : "";
+
+    // 获取合法 serviceToken
+    const tokenMatch = cookieStr.match(/serviceToken=([^;\s"'\x00-\x1F]+)/);
+    const serviceToken = (tokenMatch && tokenMatch[1] && tokenMatch[1].length > 10) ? tokenMatch[1] : "";
+
+    // 如果连核心凭证都没有，说明是未登录的游客脏数据
+    if (!userId && !serviceToken) return null;
+
+    // --- 计算显示名称 (优先匹配手机号/标识符，保底用 userId 后 4 位) ---
+    let showName = "";
     
-    // 尝试匹配 serviceToken=xxxx
-    const tokenMatch = cookieStr.match(/serviceToken=([^;\s]+)/);
-    if (tokenMatch && tokenMatch[1]) return "stoken_" + tokenMatch[1].slice(-20); // 取后20位作特征
-    
-    // 保底：去掉容易变动的空格后返回整体
-    return cookieStr.replace(/\s+/g, "");
+    // 某些小米 Cookie 中会包含暗码或手机号相关的混淆字段（如 passport_id 等），
+    // 如果没有，直接截取用户最容易辨认的 userId 结尾 4 位（效果等同于辨别多账号）
+    if (userId && userId.length >= 4) {
+        showName = `尾号${userId.slice(-4)}`;
+    } else if (serviceToken) {
+        showName = `凭证${serviceToken.slice(-4)}`;
+    } else {
+        showName = "未知账号";
+    }
+
+    return {
+        id: userId || serviceToken.slice(-30), // 用于比对去重的唯一 ID
+        name: showName
+    };
 }
 
 function capture() {
@@ -47,7 +76,15 @@ function capture() {
     const headers = cleanHeaders($request.headers || {});
     const cookie = normalizeCookie(header(headers, "cookie"));
     if (!cookie) {
-        $.msg($.name, "❌ Cookie 获取失败", "活动请求中没有 Cookie，请确认已登录小米商城");
+        $.log(`[WARN] 抓取失败: 请求中完全不包含 Cookie 字段`);
+        $.done();
+        return;
+    }
+
+    // 验证登录有效性并提取账号标志
+    const accInfo = parseAccountInfo(cookie);
+    if (!accInfo) {
+        $.log(`[WARN] 自动拦截脏数据: 检测到当前属于未登录或游客状态，放弃保存此垃圾 Cookie。`);
         $.done();
         return;
     }
@@ -72,25 +109,29 @@ function capture() {
         debug(`saved data parse error: ${e.message || e}`);
     }
 
-    // 计算当前抓取账号的特征指纹
-    const currentFingerprint = getAccountFingerprint(cookie);
+    // 【1. 顺便在这里清理掉以往缓存里的历史无效脏数据】
+    accountList = accountList.filter(item => {
+        const oldCk = header(item.headers, "cookie") || "";
+        return !!parseAccountInfo(oldCk);
+    });
     
-    // 精确查找是否存在相同账号
+    // 【2. 精确匹配去重，防止获取重复，并进行实时更新覆盖】
     const matchIndex = accountList.findIndex(item => {
         const oldCk = header(item.headers, "cookie") || "";
-        return getAccountFingerprint(oldCk) === currentFingerprint;
+        const oldInfo = parseAccountInfo(oldCk);
+        return oldInfo && oldInfo.id === accInfo.id;
     });
 
     if (matchIndex > -1) {
-        // 发现重复账号：直接替换更新，并保持位置不变
+        // 发现相同用户：直接更新替换，确保不重复添加
         accountList[matchIndex] = current;
-        $.msg($.name, "", `✅ 账号 [${matchIndex + 1}] Cookie 更新替换成功`);
-        $.log(`[INFO] 成功替换更新第 ${matchIndex + 1} 个账号的缓存数据`);
+        $.msg($.name, "", `✅ 账号 [${accInfo.name}] Cookie 更新替换成功`);
+        $.log(`[INFO] 成功替换更新账号 [${accInfo.name}] 的缓存配置`);
     } else {
-        // 新账号：顺次追加
+        // 新用户：顺次追加
         accountList.push(current);
-        $.msg($.name, "", `✅ 账号 [${accountList.length}] 抓取成功，当前共管理 ${accountList.length} 个账号`);
-        $.log(`[INFO] 成功追加第 ${accountList.length} 个新账号`);
+        $.msg($.name, "", `✅ 账号 [${accInfo.name}] 抓取成功，当前共管理 ${accountList.length} 个账号`);
+        $.log(`[INFO] 成功追加新账号 [${accInfo.name}]`);
     }
 
     const ok = $.setdata(JSON.stringify(accountList), CK_KEY);
@@ -116,15 +157,29 @@ async function run() {
         return;
     }
 
-    $.log(`[INFO] 核心就绪，共检测到 ${accountList.length} 个账号，开始队列执行...\n`);
+    // 【3. 彻底执行前置脏数据清洗：过滤掉任何不规范、未登录的残留项】
+    accountList = accountList.filter(auth => {
+        const ck = header(auth.headers || {}, "cookie");
+        return !!parseAccountInfo(ck);
+    });
+
+    if (accountList.length === 0) {
+        $.msg($.name, "🚫 缓存中无可用的登录账号", "原有账号已全部被作为脏数据清洗或已失效，请重新登录抓取");
+        return;
+    }
+
+    $.log(`[INFO] 核心就绪，共检测到 ${accountList.length} 个有效登录账号，开始队列执行...\n`);
 
     let accIndex = 0;
     for (const auth of accountList) {
         accIndex++;
-        $.log(`\n================== 开始执行账号 [${accIndex}/${accountList.length}] ==================`);
+        const ck = header(auth.headers || {}, "cookie");
+        const accInfo = parseAccountInfo(ck) || { name: `账号${accIndex}` };
+
+        $.log(`\n================== 开始执行: [${accInfo.name}] (${accIndex}/${accountList.length}) ==================`);
         
-        if (!auth.body || !header(auth.headers || {}, "cookie")) {
-            $.log(`[WARN] 账号 [${accIndex}] 数据结构不完整，跳过。`);
+        if (!auth.body || !ck) {
+            $.log(`[WARN] 账号 [${accInfo.name}] 数据结构不完整，跳过。`);
             continue;
         }
 
@@ -134,20 +189,18 @@ async function run() {
         let tasks = extractTasks(first);
         const lottery = tasks.find((task) => Number(task.taskType) === 128);
         if (!lottery) {
-            $.log(`⚠️ 账号 [${accIndex}] 未找到抽奖活动，可能配置已失效，跳过`);
+            $.log(`⚠️ 账号 [${accInfo.name}] 未找到抽奖活动，可能配置已失效，跳过`);
             continue;
         }
 
         const now = Number(lottery.serverTime || Date.now());
         if ((lottery.startTime && now < lottery.startTime) || (lottery.endTime && now > lottery.endTime)) {
-            $.log(`⚠️ 账号 [${accIndex}] 活动不在当前有效期内，跳过`);
+            $.log(`⚠️ 账号 [${accInfo.name}] 活动不在当前有效期内，跳过`);
             continue;
         }
 
         const taskResult = { done: 0, skipped: 0, failed: [] };
         let actionCount = 0;
-        
-        // 过滤出支持的任务列表
         const validTasks = tasks.filter((item) => SUPPORTED_TASK_TYPES.includes(Number(item.taskType)));
         
         for (const task of validTasks) {
@@ -173,14 +226,14 @@ async function run() {
             }
         }
 
-        // 刷新任务状态，准备抽奖
+        // 刷新状态，准备抽奖
         const refreshed = await queryTasks(auth);
         if (!refreshed) continue;
         
         tasks = extractTasks(refreshed);
         const drawTask = tasks.find((task) => Number(task.taskType) === 128);
         if (!drawTask) {
-            $.log(`⚠️ 账号 [${accIndex}] 重新查询后未找到抽奖入口`);
+            $.log(`⚠️ 账号 [${accInfo.name}] 重新查询后未找到抽奖入口`);
             continue;
         }
 
@@ -204,24 +257,23 @@ async function run() {
                 const value = award.awardValue && award.awardValue !== "1" ? ` +${award.awardValue}` : "";
                 drawResult.prizes.push(`${name}${value}`);
             }
-            if (i + 1 < drawCount) await sleep(3000); // 抽奖间隔略微拉开防风控
+            if (i + 1 < drawCount) await sleep(3000); 
         }
 
-        // 组装并推送当前账号结果
+        // 组装结果通知
         const lines = [
             `任务状态: 完成 ${taskResult.done} 次 · 已跳过已完成项 ${taskResult.skipped} 个`,
-            `抽奖状态: 成功 ${drawResult.count}/${drawCount} 次${drawResult.empty ? ` (其中未中奖 ${drawResult.empty} 次)` : ""}`,
+            `抽奖状态: 成功 ${drawResult.count}/${drawCount} 次${drawResult.empty ? ` (未中奖 ${drawResult.empty} 次)` : ""}`,
         ];
         if (drawResult.prizes.length) lines.push(`🎁 奖品明细: ${drawResult.prizes.join("、")}`);
         if (taskResult.failed.length) lines.push(`⚠️ 任务中断: ${taskResult.failed[0]}`);
         if (drawResult.failed) lines.push(`⚠️ 抽奖中止: ${drawResult.failed}`);
 
         const isOk = !taskResult.failed.length && !drawResult.failed;
-        $.msg(`${$.name} - 账号[${accIndex}]`, isOk ? "✅ 执行完成" : "⚠️ 部分完成", lines.join("\n"));
+        $.msg(`${$.name} - ${accInfo.name}`, isOk ? "✅ 执行完成" : "⚠️ 部分完成", lines.join("\n"));
         
-        // 账号间防黑头冷却延迟
         if (accountList.indexOf(auth) < accountList.length - 1) {
-            $.log(`[INFO] 账号 [${accIndex}] 完毕，冷却 5 秒后安全切换下一个账号...`);
+            $.log(`[INFO] 账号 [${accInfo.name}] 执行完毕，安全切换冷却 5 秒...`);
             await sleep(5000);
         }
     }
@@ -236,7 +288,6 @@ async function queryTasks(auth) {
     if (Number(result.code) !== 0) {
         const message = result.message || result.msg || "未知错误";
         $.log(`❌ 查询任务失败: ${message}`);
-        debug(`query raw: ${JSON.stringify(result).slice(0, 500)}`);
         return null;
     }
     return result;
@@ -309,14 +360,12 @@ function request(url, sourceHeaders, body, extraHeaders = {}) {
         const opts = { url, headers, body };
         $.post(opts, (err, resp, data) => {
             if (err) {
-                debug(`[${url}] request error: ${JSON.stringify(err)}`);
                 resolve(null);
                 return;
             }
             try {
                 resolve(JSON.parse(data));
             } catch (e) {
-                debug(`[${url}] parse error status=${resp && resp.statusCode}: ${(data || "").slice(0, 300)}`);
                 resolve(null);
             }
         });
@@ -395,6 +444,7 @@ function normalizeCookie(raw) {
         .replace(/;\s*;/g, ";");
 }
 
+// 提取错误提示
 function messageOf(result) {
     if (!result) return "网络无响应";
     return result.message || result.msg || `code=${result.code}`;
