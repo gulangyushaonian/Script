@@ -623,6 +623,7 @@ function extractLivePhotos(pictures, livePhotos, commentId, prefix = "") {
         console.log(`${prefix}video_id：` + picture.video_id);
         livePhotos.push({
           videId: picture.video_id,
+          videoId: picture.video_id,
           videoUrl: bestStream.master_url
         });
       }
