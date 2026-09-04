@@ -186,6 +186,15 @@ if (url.includes("/note/live_photo/save")) {
   }
 }
 
+if (url.includes("/note/widgets")) {
+  const item = ["cooperate_binds", "generic", "note_next_step", "widget_list"];
+  if (obj?.data) {
+    for (let i of item) {
+      delete obj.data[i];
+    }
+  }
+} 
+
 if (url.includes("/v3/note/videofeed?")) {
   // 信息流 视频
   if (obj?.data?.length > 0) {
@@ -425,70 +434,41 @@ if (url.includes("/api/sns/v5/note/comment/list?") || url.includes("/api/sns/v3/
 }
 
 // 下载评论区live图/评论区视频
-// 下载评论区live图/评论区视频
 if (url.includes("/api/sns/v1/interaction/comment/video/download?")) {
-  console.log('原评论下载body：' + rsp_body);
   const commitsCache = $.getdata("fmz200.xiaohongshu.comments.rsp");
   const commitsVideoCache = $.getdata("fmz200.xiaohongshu.comments.videos.rsp");
-  
-  let targetVideoId = obj?.data?.video?.video_id || obj?.data?.video_id || "";
-  console.log("目标 video_id：" + targetVideoId);
-
-  let matchUrl = "";
-
-  // 1. 优先在评论视频缓存中匹配
-  if (commitsVideoCache && targetVideoId) {
-    try {
-      let commitsVideoRsp = JSON.parse(commitsVideoCache);
-      if (commitsVideoRsp?.videos?.length > 0) {
-        // 兼容 videId 和 videoId 两种拼写方式
-        const matched = commitsVideoRsp.videos.find(v => (v.videoId || v.videId) === targetVideoId);
-        if (matched) matchUrl = matched.videoUrl;
+  console.log("读取缓存val：" + commitsCache);
+  console.log("目标video_id：" + obj.data.video.video_id);
+  if (commitsCache) {
+    let commitsRsp = JSON.parse(commitsCache);
+    if (commitsRsp.livePhotos.length > 0 && obj.data?.video) {
+      for (const item of commitsRsp.livePhotos) {
+        // console.log("缓存video_id：" + item.videId);
+        if (item.videId === obj.data.video.video_id) {
+          console.log("匹配到无水印链接：" + item.videoUrl);
+          obj.data.video.video_url = item.videoUrl;
+          break;
+        }
       }
-    } catch (e) {
-      console.log("解析评论视频缓存失败: " + e);
     }
-  }
-
-  // 2. 备选在评论 LivePhoto 缓存中匹配
-  if (!matchUrl && commitsCache && targetVideoId) {
-    try {
-      let commitsRsp = JSON.parse(commitsCache);
-      if (commitsRsp?.livePhotos?.length > 0) {
-        const matched = commitsRsp.livePhotos.find(p => (p.videoId || p.videId) === targetVideoId);
-        if (matched) matchUrl = matched.videoUrl;
+  } else if (commitsVideoCache){
+    let commitsVideoRsp = JSON.parse(commitsVideoCache);
+    if (commitsVideoRsp.videos.length > 0 && obj.data?.video) {
+      for (const item of commitsVideoRsp.videos) {
+        // console.log("缓存video_id：" + item.videId);
+        if (item.videId === obj.data.video.video_id) {
+          console.log("[commentVideos]匹配到无水印链接：" + item.videoUrl);
+          obj.data.video.video_url = item.videoUrl;
+          break;
+        }
       }
-    } catch (e) {
-      console.log("解析评论Live Photo缓存失败: " + e);
     }
-  }
-
-  // 3. 替换 URL 并彻底擦除报错限制标识
-  if (matchUrl && obj?.data) {
-    console.log("[匹配成功] 替换无水印视频地址 ➜ " + matchUrl);
-
-    // 适配两种可能存在的层级结构
-    if (obj.data.video) {
-      obj.data.video.video_url = matchUrl;
-      obj.data.video.url = matchUrl;
-    } else {
-      obj.data.video_url = matchUrl;
-    }
-
-    // 关键修正：移除限制与错误状态，伪造为允许下载状态
-    if (obj.data.hasOwnProperty("disable")) delete obj.data.disable;
-    if (obj.data.hasOwnProperty("msg")) delete obj.data.msg;
-    if (obj.data.hasOwnProperty("error_code")) delete obj.data.error_code;
-    
-    obj.data.status = 2; // 2 代表授权成功/可下载状态
-    obj.success = true;
-    obj.code = 0;
-
-    console.log('新评论下载body：' + JSON.stringify(obj));
   } else {
-    console.log(`未匹配到 [${targetVideoId}] 的无水印地址，保持原样`);
+    console.log(`没有[${obj.data?.video.video_id}]的无水印地址`);
   }
 }
+
+$done({body: JSON.stringify(obj)});
 
 // 小红书画质增强：加载2K分辨率的图片
 function imageEnhance(jsonStr) {
