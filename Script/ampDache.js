@@ -183,7 +183,7 @@ const $ = new Env("高德地图签到");
 const _key = 'GD_Val';
 
 // 【清理开关】想清空时改为 true，清完改回 false
-const RESET_CK = false; 
+const RESET_CK = true; 
 
 if (RESET_CK) {
     $.setdata("", _key); 
@@ -202,6 +202,8 @@ if (ckRaw) {
     try {
         let parsed = JSON.parse(ckRaw);
         ckList = Array.isArray(parsed) ? parsed : [parsed];
+        // 统一规范化 userId 类型为字符串，防止数字/字符串不一致导致去重和比较失败
+        ckList = ckList.map(item => ({...item, userId: String(item.userId || '').trim()}));
     } catch (e) {
         $.log("⚠️ 现有数据格式非JSON，已重置");
     }
@@ -277,9 +279,11 @@ async function checkIn(list) {
             $.signDay = foundItem.day;
             return true;
         }
+        pushMsg(`${list.name}->查询:今日签到信息未找到`);
     } else {
         pushMsg(`${list.name}->查询:${message}`)
     }
+    return false;
 }
 
 async function signIn(list) {
@@ -311,7 +315,13 @@ function getToken() {
         } catch(e) { return; }
     }
 
-    if (abc.sessionid && abc.userId) {
+    // 统一转为字符串，防止数字/字符串类型不一致导致去重失败
+    abc.userId = String(abc.userId || '').trim();
+    abc.sessionid = String(abc.sessionid || '').trim();
+    abc.adiu = String(abc.adiu || '').trim();
+
+    // 校验：userId 非空 且 sessionid 长度 > 30（过滤截断/损坏的脏数据）
+    if (abc.userId && abc.sessionid && abc.sessionid.length > 30) {
         let currentList = [];
         let savedData = $.getdata(_key) || $.getval(_key);
         if (savedData) {
@@ -320,15 +330,24 @@ function getToken() {
                 currentList = Array.isArray(parsed) ? parsed : [parsed];
             } catch (e) { currentList = []; }
         }
-        
-        // 去重：剔除 userId 相同的旧数据，添加新数据
-        currentList = currentList.filter(item => item.userId !== abc.userId);
-        currentList.push(abc);
-        
+
+        // 先统一规范化旧数据中 userId 的类型，再做去重
+        currentList = currentList.map(item => ({...item, userId: String(item.userId || '').trim()}));
+        let existingIdx = currentList.findIndex(item => item.userId === abc.userId);
+        if (existingIdx >= 0) {
+            // 同一 userId 已存在：用新数据覆盖旧数据，不重复 push
+            $.log(`🔄 账号 [${abc.userId}] 已存在，更新最新数据`);
+            currentList[existingIdx] = abc;
+        } else {
+            currentList.push(abc);
+        }
+
         const success = $.setdata(JSON.stringify(currentList), _key) || $.setval(JSON.stringify(currentList), _key);
         if (success) {
             $.msg($.name, `账号 [${abc.userId}] 获取成功🎉`, `当前共计 ${currentList.length} 个账号\n切换账号进入福利中心可继续添加`);
         }
+    } else {
+        $.log(`⚠️ 账号数据不完整或 sessionid 过短，已跳过: userId=${abc.userId}, sessionid长度=${abc.sessionid ? abc.sessionid.length : 0}`);
     }
 }
 
@@ -345,15 +364,34 @@ function getToken() {
     }
 
     $.log(`\n🔔 发现 ${ckList.length} 个账号，开始顺序执行任务...\n`);
+    let failedIds = [];  // 记录 Not login 的失效账号
     for (let i = 0; i < ckList.length; i++) {
         let ck = ckList[i];
+        // 统一规范化类型，防止字符串/数字不一致
+        ck.userId = String(ck.userId || '').trim();
+        ck.sessionid = String(ck.sessionid || '').trim();
+        ck.adiu = String(ck.adiu || '').trim();
         $.userId = ck.userId;
         $.sessionid = ck.sessionid;
         $.adiu = ck.adiu;
         
         $.log(`────── [账号 ${i + 1}] ID: ${$.userId} ──────`);
         await main();
+        // 检测是否 Not login，标记失效账号
+        let lastMsg = $.messages[$.messages.length - 1] || '';
+        if (lastMsg.includes('Not login') || lastMsg.includes('未登录')) {
+            failedIds.push(ck.userId);
+            $.log(`⚠️ 账号 [${ck.userId}] 已失效(Not login)，将在本轮结束后从列表移除`);
+        }
         await $.wait(2000); 
+    }
+
+    // 签到完成后清理失效账号
+    if (failedIds.length > 0) {
+        $.log(`\n🧹 清理 ${failedIds.length} 个失效账号: ${failedIds.join(', ')}`);
+        let cleanList = ckList.filter(item => !failedIds.includes(String(item.userId || '').trim()));
+        $.setdata(JSON.stringify(cleanList), _key) || $.setval(JSON.stringify(cleanList), _key);
+        $.messages.push(`🧹 已清理 ${failedIds.length} 个失效账号: ${failedIds.join(', ')}`);
     }
 
 })().catch((e) => $.logErr(e))
