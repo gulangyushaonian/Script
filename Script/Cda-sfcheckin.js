@@ -11,13 +11,15 @@
 hostname = mcs-mimp-web.sf-express.com
 ====================================
 
-v4 登录流程（对齐 chavyleung 原版，这才是对的）：
-  1. 重放捕获到的 APP 登录请求（ccsp-egmas.sf-express.com/.../universalSign），
-     回包里的 obj.sign 才是换取网页会话的钥匙。
-  2. 用该 sign 请求 shareRedirect，由服务端下发 mcs-mimp-web 的会话 Cookie。
-  3. 业务请求不硬塞抓包时的旧 Cookie（那是另一个域名的，塞进去反而导致「用户信息失效」），
+v5 登录流程：
+  1. 优先用【存档里的 sign】—— 获取 token 脚本抓 universalSign 的响应时已直接存下 obj.sign。
+     不再默认重放登录请求：重放用的 body 可能带时效令牌，隔几小时就失效，
+     表现为「登录回包无 obj.sign」+ 只剩一个 WAF 挑战 Cookie(HWWAFSESTIME)。
+  2. 存档没有 sign 时，才退回去重放登录请求（兜底），并把 HTTP 状态/回包前 80 字打进报告。
+  3. 用 sign 请求 shareRedirect，由服务端下发 mcs-mimp-web 的会话 Cookie。
+  4. 业务请求不硬塞抓包时的旧 Cookie（那是另一个域名的，塞进去反而导致「用户信息失效」），
      只带上本轮从响应里收割到的新 Cookie；QX 自带 cookie 罐同时也在工作，双保险。
-  4. 失效关键字判定补上「用户信息失效」，命中即停，不再空刷后面 4 个接口。
+  5. 失效关键字判定含「用户信息失效」，命中即停，不再空刷后面 4 个接口。
 */
 
 const $ = new Env('顺丰速运')
@@ -142,14 +144,20 @@ async function runAccount(acc, tag) {
   }
   const L = [`👤 ${tag} ${st.mobile || '(未知手机号)'}`]
 
-  if (!acc.url || !acc.body) {
+  if (!acc.sign && (!acc.url || !acc.body)) {
     acc.__dead = true
-    L.push('❌ 存储里缺 url/body（不是有效的登录请求存档），请重新获取 token（会从列表移除）')
+    L.push('❌ 存档里既没有 sign 也没有可重放的 url/body，请重新获取 token（会从列表移除）')
     return L
   }
 
-  // 1. 用捕获的登录 URL 重新建立会话（拿刷新后的 Cookie）
-  await establishSession(acc, st, L)
+  // 1. 建立会话（优先用存档 sign 换网页会话）
+  //    注意：必须检查返回值 —— 建不起会话还硬发业务请求就是空刷，
+  //    只会刷出一堆「用户信息失效」误导排查。
+  const sessionOk = await establishSession(acc, st, L)
+  if (!sessionOk) {
+    L.push('⛔ 会话建立失败，本账号跳过（未发任何业务请求）')
+    return L
+  }
 
   // 2. 签到
   if (CFG.sign) await doSign(st, L, acc)
@@ -173,35 +181,32 @@ async function runAccount(acc, tag) {
   return L
 }
 
-// -------------------- 会话建立（对齐原版：重放 APP 登录 → 换 web 会话） --------------------
+// -------------------- 会话建立（优先用存档 sign，重放仅作兜底） --------------------
 async function establishSession(acc, st, L) {
-  let sign = ''
+  let sign = String(acc.sign || '').trim()
+  let from = '存档sign'
 
-  // (a) 重放捕获到的 APP 登录请求，回包里取 obj.sign
-  try {
-    const r = await $.http.post({
-      url: acc.url,
-      body: acc.body,
-      headers: cleanReplayHeaders(acc.headers)
-    })
-    harvest(resp_cookies(r), st) // 顺手收割（本域名的响应，安全）
-    const d = safeJson(r && r.body)
-    if (d && d.obj && d.obj.sign) sign = String(d.obj.sign)
-    else if (d && !d.success) $.log(`⚠️ APP 登录返回失败: ${d.errorMessage || JSON.stringify(d).slice(0, 120)}`)
-  } catch (e) {
-    L.push(`⚠️ APP 登录请求失败: ${e.message || e}`)
+  // 存档没有 sign 才重放登录请求
+  if (!sign) {
+    from = '重放登录'
+    sign = await replayLogin(acc, st, L)
   }
-
-  // 兜底：捕获 URL 自带 sign
-  if (!sign) sign = extractSign(acc.url)
+  // 再兜底：捕获 URL 自带 sign 参数
+  if (!sign) {
+    sign = extractSign(safeDecode(acc.url || ''))
+    if (sign) from = 'URL参数'
+  }
 
   if (!sign) {
-    L.push('❌ 未取到 sign（登录回包无 obj.sign，URL 也没有 sign 参数）')
+    L.push('❌ 未取到 sign：存档没有 sign，重放登录也没拿到。')
+    L.push('   └ 请在【顺丰 APP → 我的】重新获取 token（新脚本会直接抓响应里的 sign）')
     return false
   }
-  st.sign = sign
 
-  // (b) 用 sign 换 mcs-mimp-web 的会话 Cookie
+  st.sign = sign
+  $.log(`🔑 使用${from}的 sign: ${shorten(sign, 20)}…`)
+
+  // 用 sign 换 mcs-mimp-web 会话 Cookie
   try {
     const r2 = await rawRequest(
       'GET',
@@ -209,13 +214,68 @@ async function establishSession(acc, st, L) {
       st
     )
     const n = harvest(resp_cookies(r2), st)
-    $.log(`🔑 sign 换取会话: 新 Cookie ${n} 项${n ? '（' + Object.keys(st.jar).join(', ') + '）' : ''}`)
+    const keys = Object.keys(st.jar)
+    if (n) {
+      $.log(`🔑 换取会话成功: 新 Cookie ${n} 项（${keys.join(', ')}）`)
+    } else if (!keys.length) {
+      L.push(`   └ ⚠️ shareRedirect 未下发会话 Cookie（HTTP ${(r2 && r2.status) || '?'}）`)
+    }
   } catch (e) {
-    L.push(`⚠️ shareRedirect 失败: ${e.message || e}`)
+    L.push(`   └ ⚠️ shareRedirect 失败: ${e.message || e}`)
   }
 
   st.loginOk = true
   return true
+}
+
+// 兜底：重放捕获到的 APP 登录请求，尽力从回包里挖 sign，并把诊断写进报告
+async function replayLogin(acc, st, L) {
+  if (!acc.url || !acc.body) return ''
+  try {
+    const r = await $.http.post({
+      url: acc.url,
+      body: acc.body,
+      headers: cleanReplayHeaders(acc.headers)
+    })
+    const status = (r && r.status) || '?'
+    const bodyStr = String((r && r.body) || '')
+    const n = harvest(resp_cookies(r), st)
+    if (n) $.log(`🔑 重放登录响应下发 Cookie ${n} 项（${Object.keys(st.jar).join(', ')}）`)
+
+    const s = digSign(bodyStr)
+    if (s) return s
+
+    const d = safeJson(bodyStr)
+    if (d) {
+      L.push(
+        `   └ 重放登录 HTTP ${status}｜success=${d.success}` +
+          (d.errorMessage ? `｜errorMessage=${d.errorMessage}` : '')
+      )
+    } else {
+      L.push(`   └ 重放登录 HTTP ${status}｜回包非 JSON（前 80 字：${shorten(bodyStr, 80)}）`)
+    }
+    return ''
+  } catch (e) {
+    L.push(`   └ 重放登录请求异常: ${e.message || e}`)
+    return ''
+  }
+}
+
+// 从回包里多路挖 sign
+function digSign(bodyStr) {
+  const d = safeJson(bodyStr)
+  if (d) {
+    const paths = [['obj', 'sign'], ['obj', 'data', 'sign'], ['data', 'sign'], ['result', 'sign'], ['sign']]
+    for (const p of paths) {
+      let c = d
+      for (const k of p) {
+        c = c && typeof c === 'object' ? c[k] : null
+      }
+      if (c && typeof c === 'string' && c.length > 7) return String(c).trim()
+    }
+  }
+  const m = String(bodyStr || '').match(/"sign"\s*:\s*"([^"]{8,})"/)
+  return m ? m[1] : ''
 }
 
 // 重放登录请求时：去掉会造成冲突/失效的头部，但保留 APP 自定义头（syscode/platform 等）
@@ -246,8 +306,8 @@ async function doSign(st, L, acc) {
   // 失效 → 重新登录并重试一次
   if (!(r.ok && r.data.success) && isAuthFail(errText(r)) && CFG.retryLogin && !st.retried) {
     st.retried = true
-    L.push('🔁 登录态失效，重新登录后重试…')
-    await establishSession(acc, st, L)
+    L.push('🔁 登录态失效，尝试重放登录换新 sign 后重试…')
+    await reloginForRetry(acc, st, L)
     r = await apiPost(st, U.sign, { comeFrom: 'vioin', channelFrom: 'WEIXIN' })
   }
 
@@ -291,7 +351,7 @@ async function doDailyTasks(st, L, acc) {
   let q = await apiPost(st, U.taskQuery, { channelType: '1', deviceId: deviceId() })
   if (!(q.ok && q.data.success) && isAuthFail(errText(q)) && CFG.retryLogin && !st.retried) {
     st.retried = true
-    await establishSession(acc, st, L)
+    await reloginForRetry(acc, st, L)
     q = await apiPost(st, U.taskQuery, { channelType: '1', deviceId: deviceId() })
   }
   if (!(q.ok && q.data.success && q.data.obj)) {
@@ -350,7 +410,7 @@ async function doHoney(st, L, acc) {
   let list = await apiPost(st, U.honeyTaskDetail, {}, 'honey')
   if (!(list.ok && list.data.success) && isAuthFail(errText(list)) && CFG.retryLogin && !st.retried) {
     st.retried = true
-    await establishSession(acc, st, L)
+    await reloginForRetry(acc, st, L)
     list = await apiPost(st, U.honeyTaskDetail, {}, 'honey')
   }
   if (!(list.ok && list.data.success && list.data.obj && list.data.obj.list)) {
@@ -684,6 +744,26 @@ function isAuthFail(text) {
   return /用户信息失效|请退出重新进入|Not login|未登录|登录状态|重新登录|登录已失效/.test(String(text || ''))
 }
 
+// 失败时重试：清掉存档 sign 走重放，尽量换一个新 sign 再试
+async function reloginForRetry(acc, st, L) {
+  st.jar = {}
+  const s = await replayLogin(acc, st, L)
+  if (s) {
+    st.sign = s
+    try {
+      const r = await rawRequest(
+        'GET',
+        `${U.shareRedirect}?sign=${encodeURIComponent(s)}&source=SFAPP&bizCode=${BIZ_CODE}`,
+        st
+      )
+      harvest(resp_cookies(r), st)
+    } catch (e) {
+      L.push(`   └ ⚠️ shareRedirect 失败: ${e.message || e}`)
+    }
+  }
+  return !!s
+}
+
 function markBlack(st, r) {
   const t = errText(r)
   if (t.indexOf('没有资格参与活动') >= 0 || isAuthFail(t)) st.black = true
@@ -715,6 +795,11 @@ function safeDecode(s) {
 function num(v) {
   const n = parseInt(v, 10)
   return isNaN(n) ? 0 : n
+}
+
+function shorten(s, n) {
+  const v = String(s || '')
+  return v.length > n ? v.slice(0, n) + '…' : v
 }
 
 function invitePayload(st) {
