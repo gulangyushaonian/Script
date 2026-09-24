@@ -1,25 +1,31 @@
 /*
 顺丰速运 多账号 · 签到 + 日常任务 + 超值福利 + 采蜜换大礼 + 会员日
-作者：gulangyushaonian / 修复增强版
-获取 token：配合 Cda-sfexpress.cookie.js（QX 开重写，打开【顺丰 APP → 我的】，捕获 universalSign）
+
+一个脚本，两种模式（QX 里配两条规则，都指向本文件）：
+  ① 抓包模式：打开【顺丰 APP → 我的】触发 universalSign 时，存下会话并【立刻】签到。
+  ② 定时任务模式：读存储里的会话重放登录（兜底）。
+
+为什么要"抓到就立刻用"：
+  APP 登录请求里的 timeInterval / requestSign 是【本次请求】生成的，只在秒级内有效。
+  隔几小时再重放，服务端判过期 —— 症状是「用户权限有误」/「information error!_N」。
+  所以签到要在抓到会话的当下做完，定时任务只是兜底。
+
+与原版（chavyleung/sfexpress）的差异：
+  · 原版存单个对象，第二个账号会覆盖第一个 → 这里存数组，支持多账号
+  · 抓包后立刻执行一次（原版没有）
+  其余流程（重放登录 → 取 obj.sign → shareRedirect → 业务接口）与原版一致，
+  业务请求只发 Content-Type，绝不手塞 Cookie（手塞会顶掉 QX 自带会话）。
 
 ====================================
+[rewrite_local]
+^https:\/\/ccsp-egmas.sf-express.com\/cx-app-member\/member\/app\/user\/universalSign url script-request-body <脚本地址>/Cda-sfexpress.js
+
 [task_local]
-1 0 * * * https://raw.githubusercontent.com/gulangyushaonian/Script/main/Script/Cda-sfcheckin.js, tag=顺丰速运签到, enabled=true
+1 0 * * * <脚本地址>/Cda-sfexpress.js, tag=顺丰速运
 
 [mitm]
-hostname = mcs-mimp-web.sf-express.com
+hostname = ccsp-egmas.sf-express.com
 ====================================
-
-v5 登录流程：
-  1. 优先用【存档里的 sign】—— 获取 token 脚本抓 universalSign 的响应时已直接存下 obj.sign。
-     不再默认重放登录请求：重放用的 body 可能带时效令牌，隔几小时就失效，
-     表现为「登录回包无 obj.sign」+ 只剩一个 WAF 挑战 Cookie(HWWAFSESTIME)。
-  2. 存档没有 sign 时，才退回去重放登录请求（兜底），并把 HTTP 状态/回包前 80 字打进报告。
-  3. 用 sign 请求 shareRedirect，由服务端下发 mcs-mimp-web 的会话 Cookie。
-  4. 业务请求不硬塞抓包时的旧 Cookie（那是另一个域名的，塞进去反而导致「用户信息失效」），
-     只带上本轮从响应里收割到的新 Cookie；QX 自带 cookie 罐同时也在工作，双保险。
-  5. 失效关键字判定含「用户信息失效」，命中即停，不再空刷后面 4 个接口。
 */
 
 const $ = new Env('顺丰速运')
@@ -28,6 +34,10 @@ $.is_debug = 'false'
 $.messages = []
 
 // ==================== 功能开关 ====================
+// 抓包模式下重放必须【逐字原样】—— timeInterval 与 requestSign 是一对，
+// 刷新了 timeInterval 却留着旧 requestSign 反而必然对不上（实测 information error!_11）
+let REPLAY_VERBATIM = false
+
 const CFG = {
   sign: true,          // 每日签到
   welfare: true,       // 超值福利签到红包
@@ -82,6 +92,75 @@ const U = {
 
 // ==================== 主流程 ====================
 !(async () => {
+  // 抓包模式：QX 重写规则触发时（$request 存在）—— 存会话并【立刻】用掉
+  if (typeof $request !== 'undefined' && $request) return await captureMode()
+  // 定时任务模式
+  return await taskMode()
+})()
+  .catch((e) => $.logErr(e))
+  .finally(() => $.done())
+
+// ==================== 存储与账号识别 ====================
+function readStore() {
+  const raw = $.getdata($.KEY_login)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : [parsed]
+  } catch (e) {
+    return []
+  }
+}
+
+// 用请求体里的身份字段区分账号；取不到就整段 body 做哈希（与原版 cookie 脚本一致）
+function identifySession(session) {
+  const body = (session && session.body) || ''
+  const o = safeJson(body)
+  if (o && typeof o === 'object') {
+    const keys = Object.keys(o)
+    for (let i = 0; i < keys.length; i++) {
+      if (/^(userId|userid|uid|memberId)$/i.test(keys[i]) && o[keys[i]]) return String(keys[i]) + '=' + o[keys[i]]
+    }
+    for (let i = 0; i < keys.length; i++) {
+      if (/^(mobile|phone|userMobile|loginMobile)$/i.test(keys[i])) return 'mobile=' + String(o[keys[i]])
+    }
+    const m = JSON.stringify(o).match(/(1[3-9]\d{9})/)
+    if (m) return 'mobile=' + m[1]
+  }
+  return 'body=' + md5(body)
+}
+
+// ==================== 抓包模式：抓到就用（requestSign 只在秒级内有效） ====================
+async function captureMode() {
+  const url = String($request.url || '')
+  if (url.indexOf('universalSign') < 0) return
+  if (String($request.method || '').toUpperCase() === 'OPTIONS') return
+
+  const session = { url: url, body: String($request.body || ''), headers: $request.headers || {} }
+  const list = readStore()
+  const key = identifySession(session)
+  let idx = -1
+  for (let i = 0; i < list.length; i++) {
+    if (identifySession(list[i]) === key) {
+      idx = i
+      break
+    }
+  }
+  if (idx >= 0) list[idx] = session
+  else list.push(session)
+  $.setdata(JSON.stringify(list), $.KEY_login)
+
+  $.log(`✅ 已${idx >= 0 ? '更新' : '新增'}账号 ${key}｜共 ${list.length} 个`)
+  $.msg($.name, `已获取会话(${idx >= 0 ? '更新' : '新增'})`, `账号 ${key}\n立刻用这份新鲜会话签到…`)
+
+  // 关键：用【原始】headers 逐字重放（含当时的 timeInterval/requestSign），
+  // 不做任何刷新 —— 它们是一对，只在秒级内有效。
+  REPLAY_VERBATIM = true
+  await executeAccounts([session])
+}
+
+// ==================== 定时任务模式 ====================
+async function taskMode() {
   const raw = $.getdata($.KEY_login)
   let accounts = []
   if (raw) {
@@ -99,15 +178,21 @@ const U = {
 
   if (accounts.length === 0) {
     const tip =
-      '❌ 未找到顺丰账号，请任选一种方式抓取：\n' +
-      '① 【推荐】登录顺丰小程序/APP 后进「我的」或签到页 → 自动抓 Cookie\n' +
-      '② 打开顺丰 APP「我的」→ 抓 universalSign 的 sign'
+      '❌ 未找到顺丰账号\n' +
+      '请打开【顺丰 APP → 我的】触发 universalSign 抓一次会话。\n' +
+      '抓到后脚本会【立刻】用这份新鲜会话签到（requestSign 只在秒级内有效，所以不能等定时任务）。'
     $.msg($.name, '未找到账号', tip)
     await sendMsg(tip)
     return
   }
 
   $.log(`\n🔔 发现 ${accounts.length} 个顺丰账号，开始执行...\n`)
+  return await executeAccounts(accounts, deadRaw)
+}
+
+// 两个模式共用的执行循环
+async function executeAccounts(accounts, deadRaw) {
+  deadRaw = deadRaw || []
   const blocks = []
   const dead = []
   const failed = []
@@ -156,9 +241,7 @@ const U = {
   const msg = blocks.join('\n\n')
   $.msg($.name, `执行结果 · 共 ${accounts.length} 个账号`, msg)
   await sendMsg(msg)
-})()
-  .catch((e) => $.logErr(e))
-  .finally(() => $.done())
+}
 
 // ==================== 单账号执行 ====================
 async function runAccount(acc, tag) {
@@ -341,12 +424,14 @@ function cleanReplayHeaders(headers, st) {
   // 上午抓包、晚上重放，送过去的还是上午的时间 → 必然判过期
   // （症状就是「用户权限有误」/「information error」）。重放时必须刷成当前时间。
   // 注：同批的 requestSign 带服务端盐值，客户端算不出来，只能原样带上。
-  Object.keys(out).forEach((k) => {
-    if (k.toLowerCase() === 'timeinterval') {
-      out[k] = String(Date.now())
-      if (st) st.refreshedTs = true
-    }
-  })
+  if (!REPLAY_VERBATIM) {
+    Object.keys(out).forEach((k) => {
+      if (k.toLowerCase() === 'timeinterval') {
+        out[k] = String(Date.now())
+        if (st) st.refreshedTs = true
+      }
+    })
+  }
   if (!hasHeaderKey(out, 'content-type')) out['Content-Type'] = 'application/json'
   return out
 }
