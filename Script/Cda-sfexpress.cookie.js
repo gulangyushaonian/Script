@@ -1,5 +1,5 @@
 /*
-顺丰速运 获取 Token（多账号·去重修复版）
+顺丰速运 获取 Token（多账号·去重修复版 + 诊断模式）
 作者：gulangyushaonian
 
 获取方式：
@@ -9,57 +9,88 @@
 
 ====================================
 [rewrite_local]
-^https:\/\/mcs-mimp-web\.sf-express\.com\/mcs-mimp\/share\/(weChat\/shareGiftReceiveRedirect|app\/shareRedirect).+ url script-response-body https://raw.githubusercontent.com/gulangyushaonian/Script/main/Script/Cda-sfexpress.cookie.js, requires-body=true, timeout=60, tag=顺丰获取token
+^https?:\/\/mcs-mimp-web\.sf-express\.com\/mcs-mimp\/share\/(weChat\/shareGiftReceiveRedirect|app\/shareRedirect) url script-response-body https://raw.githubusercontent.com/gulangyushaonian/Script/main/Script/Cda-sfexpress.cookie.js, requires-body=true, timeout=60, tag=顺丰获取token
 
 [mitm]
 hostname = mcs-mimp-web.sf-express.com
 ====================================
 
-说明（相对旧版改了什么）：
-  1. 旧版正则只匹配 weChat/shareGiftReceiveRedirect，APP 端 share/app/shareRedirect 抓不到 → 已补全。
-  2. 旧版只从 body.userId / headers.memberId 取身份，实际这两个字段都不存在，
-     真正的身份在 Cookie 的 _login_user_id_ / _login_mobile_ 里 → 已改为从 Cookie 取。
-  3. 旧版不存手机号，签到脚本只能显示"未知手机号" → 现在存 mobile 字段。
-  4. 旧版用 script-request-body 拿不到登录后新下发的 Cookie → 改为 script-response-body，
-     同时合并 request 与 Set-Cookie，保证存下来的 Cookie 是登录态。
+诊断模式 DIAG = true 时：不管成功失败都会弹通知，并在 QX 日志里打印「抓到了什么」。
+排障完成后可改成 false，只看结果。
+
+判断方法：
+  · 通知「未取到登录态」→ 脚本跑了，但这条请求里没有登录 Cookie，看通知里列出的 Cookie键
+  · 通知「脚本未触发」→ rewrite 规则/MitM 没生效，或脚本地址 404
 */
 
 const $ = new Env('顺丰速运')
 $.KEY_login = 'chavy_login_sfexpress'
 $.is_debug = 'false'
 
+// true: 失败也弹通知并打印抓包详情（排障用）；false: 只在成功时通知
+const DIAG = true
+
+// Cookie 属性名（解析 Set-Cookie 时要跳过，不能当成 cookie 值）
+// 必须声明在 IIFE 之前：下面 parseCookie() 会被 IIFE 同步调用，const 在 TDZ 内会抛
+// "Cannot access 'COOKIE_ATTRS' before initialization"
+const COOKIE_ATTRS = ['path', 'domain', 'expires', 'max-age', 'httponly', 'secure', 'samesite', 'version', 'comment']
+
 !(async () => {
+  // ---------- 0. 触发检查 ----------
   if (typeof $request === 'undefined' || !$request) {
-    $.log('⚠️ 无 $request，本脚本只能由 QX 重写触发')
+    notify('脚本未触发', '这是 QX 重写脚本，不能手动运行。请用【重写规则】在打开顺丰小程序/APP 时自动触发。')
     return
   }
   if (String($request.method || '').toUpperCase() === 'OPTIONS') return
 
   const reqHeaders = $request.headers || {}
-  const respHeaders = (typeof $response !== 'undefined' && $response && $response.headers) || {}
+  const hasResp = typeof $response !== 'undefined' && $response
+  const respHeaders = (hasResp && $response.headers) || {}
+  const respBody = (hasResp && ($response.body || '')) || ''
 
-  // 1) 合并 Cookie：先放请求里的，再用响应 Set-Cookie 覆盖（登录后新下发的才是有效登录态）
-  let cookie = getHeader(reqHeaders, 'cookie') || ''
+  // ---------- 1. 合并 Cookie ----------
+  const reqCookie = getHeader(reqHeaders, 'cookie') || ''
   const setCookie = collectSetCookie(respHeaders)
-  if (setCookie) {
-    const map = {}
-    parseCookie(cookie).forEach((p) => (map[p.k] = p.v))
-    parseCookie(setCookie).forEach((p) => (map[p.k] = p.v))
-    cookie = Object.keys(map)
-      .map((k) => `${k}=${map[k]}`)
-      .join('; ')
-  }
+  const cookie = mergeCookies(reqCookie, setCookie)
 
-  // 2) 从 Cookie 取身份（_login_user_id_ / _login_mobile_）
-  const userId = String(cookieVal(cookie, '_login_user_id_') || '').trim()
-  const phone = String(cookieVal(cookie, '_login_mobile_') || '').trim()
-  const mobile = phone ? (phone.length >= 11 ? `${phone.slice(0, 3)}****${phone.slice(7)}` : phone) : ''
+  // ---------- 2. 取身份（多路兜底） ----------
+  const userId = firstOf([
+    cookieVal(cookie, '_login_user_id_'),
+    bodyVal($request.body, 'userId'),
+    bodyVal(respBody, 'userId'),
+    regexVal(respBody, /_login_user_id_["'=:\s]+([0-9]{5,})/)
+  ])
+  const phone = firstOf([
+    cookieVal(cookie, '_login_mobile_'),
+    regexVal(respBody, /_login_mobile_["'=:\s]+(\d{11})/),
+    bodyVal($request.body, 'mobile')
+  ])
+  const mobile = formatPhone(phone)
+  const cookieKeys = listCookieKeys(cookie)
 
-  if (!cookie || !userId) {
-    $.log(`⚠️ 未取到有效登录 Cookie（userId=${userId || '空'}），可能还未登录，已跳过`)
+  const detail = [
+    `方法: ${$request.method || '?'}`,
+    `URL: ${shorten($request.url, 90)}`,
+    `有响应对象: ${hasResp ? '是' : '否'}`,
+    `请求Cookie: ${reqCookie ? reqCookie.length + ' 字符' : '空'}`,
+    `响应Set-Cookie: ${setCookie ? setCookie.length + ' 字符' : '空'}`,
+    `Cookie键: ${cookieKeys || '(无)'}`,
+    `userId: ${userId || '(未取到)'}`,
+    `手机号: ${phone || '(未取到)'}`
+  ].join('\n')
+
+  $.log(`\n【诊断】\n${detail}\n`)
+
+  // ---------- 3. 无登录态 ----------
+  if (!userId) {
+    notify(
+      '未取到登录态',
+      `${detail}\n\n👉 这条请求里没有 _login_user_id_。请确认：① 已在顺丰小程序/APP 里【登录】；② 进的是【我的 → 优惠券/积分】这类需要登录的页面；③ MitM 与重写均已开启。把上面这段发我。`
+    )
     return
   }
 
+  // ---------- 4. 组装 session ----------
   const session = {
     url: $request.url,
     body: $request.body || '',
@@ -68,7 +99,7 @@ $.is_debug = 'false'
     mobile: mobile
   }
 
-  // 3) 读取已有列表
+  // ---------- 5. 读列表 + 清脏数据 ----------
   let list = []
   const old = $.getdata($.KEY_login)
   if (old) {
@@ -79,12 +110,12 @@ $.is_debug = 'false'
       list = []
     }
   }
-  // 清掉旧格式/脏数据（没有 Cookie 或没有 userId 的条目）
   const before = list.length
   list = list.filter((it) => it && it.headers && getHeader(it.headers, 'cookie'))
-  if (list.length !== before) $.log(`🧹 清理了 ${before - list.length} 条无效旧数据`)
+  const cleaned = before - list.length
+  if (cleaned > 0) $.log(`🧹 清理了 ${cleaned} 条无效旧数据`)
 
-  // 4) 按 userId 去重（统一转字符串 + trim，避免数字/字符串不一致导致重复）
+  // ---------- 6. 按 userId 去重（统一字符串比较） ----------
   let updated = false
   for (let i = 0; i < list.length; i++) {
     const oldId = String(list[i].userId || legacyId(list[i]) || '').trim()
@@ -96,20 +127,38 @@ $.is_debug = 'false'
   }
   if (!updated) list.push(session)
 
-  // 5) 保存
+  // ---------- 7. 保存 ----------
   const ok = $.setdata(JSON.stringify(list), $.KEY_login)
+  const action = updated ? '更新' : '新增'
   if (!ok) {
-    $.msg($.name, '保存失败', `账号 ${mobile || userId} 写入失败`)
+    notify('保存失败', `账号 ${mobile || userId} 写入失败\n\n${detail}`)
     return
   }
 
-  const action = updated ? '更新' : '新增'
-  const desc = `${action}账号成功\n手机号: ${mobile || '未知'}\n当前共 ${list.length} 个账号`
   $.log(`✅ ${action}账号 [${userId}] ${mobile}`)
-  $.msg($.name, `${action}账号成功`, desc)
+  notify(
+    `${action}账号成功`,
+    `手机号: ${mobile || '未知'}\nuserId: ${userId}\n当前共 ${list.length} 个账号${cleaned ? `（顺带清理 ${cleaned} 条旧脏数据）` : ''}`
+  )
 })()
-  .catch((e) => $.logErr(e))
+  .catch((e) => {
+    try {
+      notify('获取 Token 异常', String((e && e.message) || e))
+    } catch (e2) {
+      $.logErr(e)
+    }
+  })
   .finally(() => $.done())
+
+// ==================== 通知（失败也发，便于排障） ====================
+function notify(title, content) {
+  try {
+    $.msg($.name, title, content)
+  } catch (e) {
+    $.log(`【${title}】${content}`)
+  }
+  if (DIAG) $.log(`\n⚠️ ${title}\n${content}\n`)
+}
 
 // ==================== 工具 ====================
 function getHeader(headers, name) {
@@ -128,21 +177,78 @@ function collectSetCookie(headers) {
   return Array.isArray(raw) ? raw.join('; ') : String(raw)
 }
 
+// 修正：旧版用 v.indexOf('=') === -1 过滤，会把值里含 = 的正常 Cookie 一起丢掉
 function parseCookie(str) {
-  return String(str || '')
+  const out = []
+  String(str || '')
     .split(';')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => {
-      const i = s.indexOf('=')
-      return i > 0 ? { k: s.slice(0, i).trim(), v: s.slice(i + 1).trim() } : null
+    .forEach((s) => {
+      const item = s.trim()
+      if (!item) return
+      const i = item.indexOf('=')
+      if (i <= 0) return
+      const k = item.slice(0, i).trim()
+      const v = item.slice(i + 1).trim()
+      if (COOKIE_ATTRS.indexOf(k.toLowerCase()) >= 0) return
+      if (!k || !v) return
+      out.push({ k: k, v: v })
     })
-    .filter((x) => x && x.k && x.v.indexOf('=') === -1)
+  return out
+}
+
+function mergeCookies(reqCookie, setCookie) {
+  if (!setCookie) return String(reqCookie || '')
+  const map = {}
+  parseCookie(reqCookie).forEach((p) => (map[p.k] = p.v))
+  parseCookie(setCookie).forEach((p) => (map[p.k] = p.v))
+  return Object.keys(map)
+    .map((k) => `${k}=${map[k]}`)
+    .join('; ')
+}
+
+function listCookieKeys(cookie) {
+  const keys = parseCookie(cookie).map((p) => p.k)
+  if (!keys.length) return ''
+  const loginKeys = keys.filter((k) => /login|user|mobile|token|session|sf/i.test(k))
+  return loginKeys.length ? loginKeys.join(', ') : `${keys.slice(0, 6).join(', ')} …共${keys.length}个`
 }
 
 function cookieVal(cookie, key) {
   const m = String(cookie || '').match(new RegExp('(?:^|;\\s*)' + key + '=([^;]*)'))
   return m ? m[1] : ''
+}
+
+function bodyVal(body, key) {
+  try {
+    const o = JSON.parse(body || '{}')
+    return o && o[key] ? String(o[key]) : ''
+  } catch (e) {
+    return ''
+  }
+}
+
+function regexVal(str, re) {
+  const m = String(str || '').match(re)
+  return m && m[1] ? m[1] : ''
+}
+
+function firstOf(arr) {
+  for (let i = 0; i < arr.length; i++) {
+    const v = String(arr[i] || '').trim()
+    if (v) return v
+  }
+  return ''
+}
+
+function formatPhone(phone) {
+  const p = String(phone || '').trim()
+  if (!p) return ''
+  return p.length >= 11 ? `${p.slice(0, 3)}****${p.slice(7)}` : p
+}
+
+function shorten(s, n) {
+  const v = String(s || '')
+  return v.length > n ? v.slice(0, n) + '…' : v
 }
 
 // 兼容旧数据：从 body.userId 或 Cookie 里兜底取 userId
