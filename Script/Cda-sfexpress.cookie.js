@@ -1,37 +1,37 @@
 /*
-顺丰速运 获取 Token（多账号·直接抓 sign 版）
+顺丰速运 获取 Token（多账号 · 双通道抓取）
 作者：gulangyushaonian / 修复增强版
 
-【关键】抓的是 APP 登录接口 universalSign 的【响应】，直接把它回包里的 obj.sign 存下来。
-  不再依赖"重放请求去换 sign" —— 重放用的 body 里可能带有时效令牌，隔几小时就失效，
-  表现为「登录回包无 obj.sign」+ 只剩一个 WAF 挑战 Cookie(HWWAFSESTIME)。
-
-获取方式：
-  QX 开重写 + MitM，打开【顺丰 APP → 我的】，触发 universalSign 即被捕获。
-  多账号：切换登录一个抓一次，同账号重复捕获只覆盖不重复追加。
+一次抓两样东西，签到脚本按可靠性依次使用：
+  ① Cookie —— 从 mcs-mimp-web 的【任意请求头】里抓完整 Cookie（最可靠，业界通用做法）
+  ② sign  —— 从 ccsp-egmas 的 universalSign【响应】里抓 obj.sign（换会话用）
 
 ====================================
 [rewrite_local]
-^https:\/\/ccsp-egmas\.sf-express\.com\/cx-app-member\/member\/app\/user\/universalSign url script-response-body https://raw.githubusercontent.com/gulangyushaonian/Script/main/Script/Cda-sfexpress.cookie.js, requires-body=true, timeout=60, tag=顺丰获取token
+# ① 抓 Cookie（打开顺丰 APP/小程序、进「我的」或签到页时触发）
+^https:\/\/mcs-mimp-web\.sf-express\.com\/ url script-request-header <你上传的脚本地址>/Cda-sfexpress.cookie.js, tag=顺丰抓Cookie
+
+# ② 抓 sign（打开顺丰 APP「我的」时触发）
+^https:\/\/ccsp-egmas\.sf-express\.com\/cx-app-member\/member\/app\/user\/universalSign url script-response-body <你上传的脚本地址>/Cda-sfexpress.cookie.js, requires-body=true, timeout=60, tag=顺丰抓sign
 
 [mitm]
 hostname = ccsp-egmas.sf-express.com, mcs-mimp-web.sf-express.com
 ====================================
 
-存下来的每条记录：{url, body, headers, sign, userId, mobile}
-  · sign：优先取响应回包里的 obj.sign，没有就从请求 URL 的 sign 参数取
-  · 签到脚本直接拿 sign 去换网页会话，不需要重放登录请求
-  · 若 sign 缺失，签到脚本仍会退回去重放登录请求（兜底）
+存下来的每条记录：{url, body, headers, sign, cookie, userId, mobile}
+  · cookie：完整 Cookie 头，签到脚本原样带给业务接口（首选）
+  · sign  ：没有 cookie 时用它换会话（备用）
+  · 识别账号优先用 Cookie 里的 _login_user_id_ / _login_mobile_，其次响应/请求体字段
 */
 
 const $ = new Env('顺丰速运')
 $.KEY_login = 'chavy_login_sfexpress'
 $.is_debug = 'false'
 
-// true: 失败也弹通知并打印抓到的详情（排障用）
+// true: 打印抓到的详情（排障用）
 const DIAG = true
 
-// 账号识别用的规则常量 —— 必须声明在 IIFE 之前（否则 identify() 撞 TDZ）
+// 常量必须声明在 IIFE 之前（否则 identify() 撞 TDZ）
 const PHONE_RE = /(?:^|[^\d])(1[3-9]\d{9})(?:[^\d]|$)/
 const ID_FIELDS = ['userId', 'userid', 'uid', 'memberId', 'memberid', 'customerId', 'accountId']
 const MOBILE_FIELDS = [
@@ -46,9 +46,8 @@ const MOBILE_FIELDS = [
 ]
 
 !(async () => {
-  // ---------- 0. 触发检查 ----------
   if (typeof $request === 'undefined' || !$request) {
-    notify('脚本未触发', '这是 QX 重写脚本，不能手动运行。\n请用【重写规则】在打开顺丰 APP「我的」时自动触发。')
+    notify('脚本未触发', '这是 QX 重写脚本，不能手动运行。请用【重写规则】在打开顺丰 APP/小程序时自动触发。')
     return
   }
   if (String($request.method || '').toUpperCase() === 'OPTIONS') return
@@ -56,30 +55,50 @@ const MOBILE_FIELDS = [
   const url = String($request.url || '')
   const reqBody = String($request.body || '')
   const headers = $request.headers || {}
+  const hLow = lowerHeaders(headers)
+  const reqCookie = String(hLow['cookie'] || '')
   const respBody = typeof $response !== 'undefined' && $response ? String($response.body || '') : ''
   const respStatus = typeof $response !== 'undefined' && $response ? $response.status : ''
 
-  // ---------- 1. 取 sign（本次的核心） ----------
-  const sign = findSign(respBody, url)
-  const respJson = safeJson(respBody)
+  const isSignHost = url.indexOf('universalSign') >= 0
+  const isCookieHost = url.indexOf('mcs-mimp-web.sf-express.com') >= 0
 
-  // ---------- 2. 识别账号 ----------
-  const id = identify(respBody, reqBody, headers)
+  // ---------- 1. 分别取两样东西 ----------
+  const sign = isSignHost ? findSign(respBody, url) : ''
+  const cookie = reqCookie || extractCookieFromHeaders(headers)
+
+  const id = identify(respBody, reqBody, reqCookie, headers)
 
   const detail = [
+    `触发: ${isSignHost ? 'universalSign(抓sign)' : isCookieHost ? 'mcs-mimp-web(抓Cookie)' : '未知URL'}`,
     `URL: ${shorten(url, 78)}`,
     `HTTP: ${respStatus || '?'}`,
-    `响应: ${respBody ? respBody.length + ' 字符' : '空'}${respJson ? '' : '（非 JSON）'}`,
-    `响应字段: ${bodyKeys(respBody)}`,
-    `sign: ${sign ? shorten(sign, 24) + '…' : '(未取到)'}`,
+    `Cookie: ${cookie ? cookie.length + ' 字符' : '无'}`,
+    `Cookie 键: ${cookieKeys(cookie) || '无'}`,
+    `sign: ${sign ? shorten(sign, 24) + '…' : '(无)'}`,
     `请求body: ${reqBody ? reqBody.length + ' 字符' : '空'}`,
-    `请求body字段: ${bodyKeys(reqBody)}`,
     `识别方式: ${id.by}`,
-    `手机号: ${id.mobile || (id.value ? id.value : '(未识别)')}`
+    `手机号: ${id.mobile || '(未识别)'}`
   ].join('\n')
-  $.log(`\n【诊断】\n${detail}\n`)
+  if (DIAG) $.log(`\n【诊断】\n${detail}\n`)
 
-  // ---------- 3. 读列表（兼容旧的单对象存档） ----------
+  // 这次触发什么都没抓到：不写存储，但要让用户知道（否则看起来像没反应）
+  if (!sign && !cookie) {
+    notify(
+      '本次未捕获到有效信息',
+      [
+        `触发: ${isSignHost ? 'universalSign' : isCookieHost ? 'mcs-mimp-web' : '未知'}`,
+        `Cookie: 无`,
+        `sign: 无`,
+        ``,
+        `若是 universalSign：请确认该接口的回包里有 obj.sign`,
+        `若是 mcs-mimp-web：请确认已登录顺丰再访问`
+      ].join('\n')
+    )
+    return
+  }
+
+  // ---------- 2. 读列表（兼容旧的单对象存档） ----------
   let list = []
   const old = $.getdata($.KEY_login)
   if (old) {
@@ -91,50 +110,71 @@ const MOBILE_FIELDS = [
     }
   }
   const before = list.length
-  // 有效条目 = 至少有 sign 或 url
-  list = list.filter((it) => it && (it.sign || it.url))
+  list = list.filter((it) => it && (it.sign || it.cookie || it.url))
 
-  // ---------- 4. 组装并去重 ----------
+  // ---------- 3. 找同账号记录（userId 或 mobile 任一相同即为同一账号） ----------
+  const cand = [id.userId, id.mobile].filter(Boolean)
+  let idx = -1
+  for (let i = 0; i < list.length; i++) {
+    const keys = [list[i].userId, list[i].mobile].filter(Boolean)
+    if (cand.length && keys.length && cand.some((c) => keys.indexOf(c) >= 0)) {
+      idx = i
+      break
+    }
+  }
+
+  if (idx >= 0) {
+    const rec = list[idx]
+    // 合并：只覆盖本次真正抓到的东西，另一种保留原值
+    if (sign) rec.sign = sign
+    if (cookie) rec.cookie = cookie
+    if (isSignHost) {
+      rec.url = url
+      rec.body = reqBody
+      rec.headers = headers
+    }
+    if (id.userId) rec.userId = id.userId
+    if (id.mobile) rec.mobile = id.mobile
+    $.setdata(JSON.stringify(list), $.KEY_login)
+    $.log(`✅ 更新账号 ${rec.mobile || rec.userId}｜cookie=${rec.cookie ? '有' : '无'} sign=${rec.sign ? '有' : '无'}`)
+    notify(
+      '更新账号成功',
+      [
+        `手机号: ${rec.mobile || rec.userId || '未知'}`,
+        `Cookie: ${rec.cookie ? '已捕获 ✓' : '无'}`,
+        `sign: ${rec.sign ? '已捕获 ✓' : '无'}`,
+        `当前共 ${list.length} 个账号`
+      ].join('\n')
+    )
+    return
+  }
+
+  // ---------- 4. 新账号 ----------
   const session = {
-    url: url,
-    body: reqBody,
-    headers: headers,
+    url: isSignHost ? url : '',
+    body: isSignHost ? reqBody : '',
+    headers: isSignHost ? headers : {},
     sign: sign || '',
+    cookie: cookie || '',
     userId: id.userId || '',
     mobile: id.mobile || '',
     key: id.value
   }
-
-  let updated = false
-  if (id.value) {
-    for (let i = 0; i < list.length; i++) {
-      const oldKey = String(list[i].key || identify('', list[i].body, list[i].headers).value || '').trim()
-      if (oldKey && oldKey === id.value) {
-        // 保留旧记录里可能还有用的 sign
-        if (!session.sign && list[i].sign) session.sign = list[i].sign
-        list[i] = session
-        updated = true
-        break
-      }
-    }
-  }
-  if (!updated) list.push(session)
-
-  // ---------- 5. 保存 ----------
+  list.push(session)
   const ok = $.setdata(JSON.stringify(list), $.KEY_login)
-  const action = updated ? '更新' : '新增'
   if (!ok) {
     notify('保存失败', `账号 ${id.mobile || id.value} 写入失败\n\n${detail}`)
     return
   }
 
-  $.log(`✅ ${action}账号 [${id.value}] ${id.mobile} sign=${sign ? '有' : '无'}`)
+  $.log(`✅ 新增账号 [${id.value}] ${id.mobile}｜cookie=${cookie ? '有' : '无'} sign=${sign ? '有' : '无'}`)
   notify(
-    `${action}账号成功`,
+    '新增账号成功',
     [
       `手机号: ${id.mobile || id.value || '未知'}`,
-      `sign: ${sign ? '已捕获 ✓' : '⚠️ 未捕获到（签到脚本会退回去重放登录请求）'}`,
-      `当前共 ${list.length} 个账号${before > list.length ? `（清理 ${before - list.length + 1} 条旧数据）` : ''}`
+      `Cookie: ${cookie ? '已捕获 ✓' : '无（请再访问一次顺丰签到页）'}`,
+      `sign: ${sign ? '已捕获 ✓' : '无（可再打开顺丰 APP 我的）'}`,
+      `当前共 ${list.length} 个账号${before > 0 ? `（原有 ${before} 个）` : ''}`
     ].join('\n')
   )
 })()
@@ -157,7 +197,7 @@ function notify(title, content) {
   if (DIAG) $.log(`\n⚠️ ${title}\n${content}\n`)
 }
 
-// ==================== 取 sign（多路兜底） ====================
+// ==================== 取 sign ====================
 function findSign(respBody, url) {
   const j = safeJson(respBody)
   const paths = [
@@ -167,31 +207,54 @@ function findSign(respBody, url) {
     ['result', 'sign'],
     ['sign']
   ]
-  for (const path of paths) {
+  for (const p of paths) {
     let cur = j
-    for (const k of path) {
+    for (const k of p) {
       if (!cur || typeof cur !== 'object') {
         cur = null
         break
       }
       cur = cur[k]
     }
-    if (cur && typeof cur === 'string') return cur.trim()
+    if (cur && typeof cur === 'string' && cur.trim().length >= 4) return cur.trim()
   }
-  // 正则兜底：响应里任何 "sign":"..."
   let m = String(respBody || '').match(/"sign"\s*:\s*"([^"]{8,})"/)
   if (m) return m[1]
-  // 最后：请求 URL 自带的 sign 参数
   m = String(url || '').match(/[?&]sign=([^&#]+)/)
   return m ? decodeURIComponent(m[1]) : ''
 }
 
-// ==================== 账号识别 ====================
-// 优先用响应（服务端权威），其次请求 body / headers
-function identify(respBody, reqBody, headers) {
-  const sources = [safeJson(respBody), safeJson(reqBody)]
-  const h = lowerHeaders(headers)
+// 有些环境把 Cookie 放在奇怪的位置，兜底从 headers 拼
+function extractCookieFromHeaders(headers) {
+  const low = lowerHeaders(headers)
+  if (low['cookie']) return String(low['cookie'])
+  const parts = []
+  Object.keys(headers || {}).forEach((k) => {
+    if (/^cookie$/i.test(k) || /^set-cookie$/i.test(k)) parts.push(String(headers[k]))
+  })
+  return parts.join('; ')
+}
 
+function cookieKeys(cookie) {
+  return String(cookie || '')
+    .split(';')
+    .map((x) => x.split('=')[0].trim())
+    .filter(Boolean)
+    .join(', ')
+}
+
+// ==================== 账号识别 ====================
+function identify(respBody, reqBody, reqCookie, headers) {
+  // Cookie 里最权威：_login_user_id_ / _login_mobile_
+  const ck = parseCookie(reqCookie)
+  const ckUid = ck['_login_user_id_'] || ck['_login_user_id'] || ''
+  const ckMobile = ck['_login_mobile_'] || ck['_login_mobile'] || ''
+  if (ckUid) return { value: ckUid, by: 'Cookie._login_user_id_', userId: ckUid, mobile: formatPhone(ckMobile) }
+  if (ckMobile && /1[3-9]\d{9}/.test(ckMobile))
+    return { value: ckMobile, by: 'Cookie._login_mobile_', userId: '', mobile: formatPhone(ckMobile) }
+
+  const h = lowerHeaders(headers)
+  const sources = [safeJson(respBody), safeJson(reqBody)]
   for (const src of sources) {
     if (!src || typeof src !== 'object') continue
     const flat = flatten(src)
@@ -203,17 +266,29 @@ function identify(respBody, reqBody, headers) {
       const v = findKeyCI(flat, f)
       if (v && /1[3-9]\d{9}/.test(String(v))) return build(String(v), `响应/请求.${f}`, flat)
     }
-    for (const f of MOBILE_FIELDS) {
-      const v = h[f.toLowerCase()]
-      if (v && /1[3-9]\d{9}/.test(String(v))) return build(String(v), `headers.${f}`, flat)
-    }
-    // 深层：整个对象里搜第一个 11 位手机号
     const m = JSON.stringify(src).match(PHONE_RE)
     if (m) return build(m[1], '响应/请求内手机号', flat)
   }
+  for (const f of MOBILE_FIELDS) {
+    const v = h[f.toLowerCase()]
+    if (v && /1[3-9]\d{9}/.test(String(v))) return build(String(v), `headers.${f}`, {})
+  }
+  // 兜底：Cookie 里的纯数字 userId（可能是别的键名）
+  const guess = guessUidFromCookie(ck)
+  if (guess) return { value: guess, by: 'Cookie.数字ID(推断)', userId: guess, mobile: '' }
 
-  // 兜底：请求 body 的 md5
-  return { value: md5(String(reqBody || '')), by: '请求body哈希(兜底)', userId: '', mobile: '' }
+  return { value: md5(String(reqBody || reqCookie || '')), by: '内容哈希(兜底)', userId: '', mobile: '' }
+}
+
+function guessUidFromCookie(ck) {
+  const keys = Object.keys(ck)
+  for (let i = 0; i < keys.length; i++) {
+    if (/user_?id|member_?id|uid/i.test(keys[i])) {
+      const v = String(ck[keys[i]] || '').replace(/^"|"$/g, '')
+      if (/^\d{5,}$/.test(v)) return v
+    }
+  }
+  return ''
 }
 
 function build(v, by, flat) {
@@ -235,7 +310,22 @@ function build(v, by, flat) {
   return { value: v, by: by, userId: isPhone ? '' : v, mobile: mobile }
 }
 
-// 把嵌套对象的关键字段拍平（只看一层嵌套，够用且不会爆栈）
+function parseCookie(str) {
+  const out = {}
+  const skip = ['path', 'domain', 'expires', 'max-age', 'httponly', 'secure', 'samesite', 'version', 'comment']
+  String(str || '')
+    .split(';')
+    .forEach((seg) => {
+      const i = seg.indexOf('=')
+      if (i < 1) return
+      const k = seg.slice(0, i).trim()
+      const v = seg.slice(i + 1).trim()
+      if (!k || skip.indexOf(k.toLowerCase()) >= 0) return
+      out[k] = v
+    })
+  return out
+}
+
 function flatten(obj) {
   const out = {}
   const walk = (o, depth) => {
@@ -243,11 +333,8 @@ function flatten(obj) {
     Object.keys(o).forEach((k) => {
       const v = o[k]
       if (v === null || v === undefined) return
-      if (typeof v === 'object') {
-        walk(v, depth + 1)
-      } else if (!(k in out)) {
-        out[k] = v
-      }
+      if (typeof v === 'object') walk(v, depth + 1)
+      else if (!(k in out)) out[k] = v
     })
   }
   walk(obj, 0)
@@ -274,13 +361,6 @@ function lowerHeaders(headers) {
     o[k.toLowerCase()] = src[k]
   })
   return o
-}
-
-function bodyKeys(body) {
-  const o = safeJson(body)
-  if (!o || typeof o !== 'object') return '(非 JSON)'
-  const keys = Object.keys(o)
-  return keys.length ? keys.slice(0, 10).join(', ') : '(空对象)'
 }
 
 function safeJson(s) {
