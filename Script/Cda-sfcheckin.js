@@ -94,10 +94,16 @@ const U = {
       accounts = []
     }
   }
-  accounts = accounts.filter((a) => a && a.url)
+  // cookie / sign / url 任一存在即视为有效账号（cookie-only 是最推荐的状态）
+  // 三样全无的是废存档：既跑不了也别留在存储里发霉，归到 deadRaw 交给后面的清理
+  const deadRaw = accounts.filter((a) => !a || !(a.cookie || a.sign || a.url))
+  accounts = accounts.filter((a) => a && (a.cookie || a.sign || a.url))
 
   if (accounts.length === 0) {
-    const tip = '❌ 未找到顺丰账号\n请在【顺丰 APP → 我的】里操作一次以获取 token' + '\n（抓的是 universalSign 接口，只有 APP 端才有）'
+    const tip =
+      '❌ 未找到顺丰账号，请任选一种方式抓取：\n' +
+      '① 【推荐】登录顺丰小程序/APP 后进「我的」或签到页 → 自动抓 Cookie\n' +
+      '② 打开顺丰 APP「我的」→ 抓 universalSign 的 sign'
     $.msg($.name, '未找到账号', tip)
     await sendMsg(tip)
     return
@@ -125,11 +131,19 @@ const U = {
 
   // 清理：__dead（存档结构无效）+ __failed（本轮报错，如取不到 sign / 登录被拒）
   const removable = []
+  if (CFG.cleanDead) deadRaw.forEach((a) => removable.push(a))
   if (CFG.cleanDead) dead.forEach((a) => removable.push(a))
   if (CFG.cleanFailed) failed.forEach((a) => removable.push(a))
 
-  if (removable.length > 0) {
-    const alive = accounts.filter((a) => removable.indexOf(a) < 0)
+  const alive = accounts.filter((a) => removable.indexOf(a) < 0)
+
+  // 安全阀：全失败通常是规则/网络/服务端问题，不是账号坏了 —— 不许清空
+  if (removable.length > 0 && alive.length === 0) {
+    blocks.push(
+      `⚠️ ${removable.length} 个账号本轮全部报错，已保留不清空\n   └ 全部失败一般是抓包/网络问题，不是账号坏了；修好后重跑即可`
+    )
+    $.log('⚠️ 全部账号报错，已跳过清理')
+  } else if (removable.length > 0) {
     $.setdata(JSON.stringify(alive), $.KEY_login)
     const parts = []
     if (CFG.cleanDead && dead.length) parts.push(`无效存档 ${dead.length} 个`)
@@ -162,7 +176,7 @@ async function runAccount(acc, tag) {
   }
   const L = [`👤 ${tag} ${st.mobile || '(未知手机号)'}`]
 
-  if (!acc.sign && (!acc.url || !acc.body)) {
+  if (!acc.sign && !acc.cookie && (!acc.url || !acc.body)) {
     acc.__dead = true
     L.push('❌ 存档里既没有 sign 也没有可重放的 url/body，请重新获取 token（会从列表移除）')
     return L
@@ -202,6 +216,24 @@ async function runAccount(acc, tag) {
 
 // -------------------- 会话建立（优先用存档 sign，重放仅作兜底） --------------------
 async function establishSession(acc, st, L) {
+  // ① 抓到过完整 Cookie → 原样回放，最可靠，连 shareRedirect 都不用走
+  if (acc.cookie) {
+    const jar = {}
+    String(acc.cookie)
+      .split(';')
+      .forEach((seg) => {
+        const i = seg.indexOf('=')
+        if (i < 1) return
+        const k = seg.slice(0, i).trim()
+        if (k) jar[k] = seg.slice(i + 1).trim()
+      })
+    st.jar = jar
+    st.cookieMode = 'explicit'
+    st.loginOk = true
+    L.push(`   └ 使用抓包到的 Cookie（${Object.keys(jar).join(', ') || '空'}）`)
+    return true
+  }
+
   let sign = String(acc.sign || '').trim()
   let from = '存档sign'
 
@@ -336,7 +368,7 @@ async function doSign(st, L, acc) {
   let r = await apiPost(st, U.sign, { comeFrom: 'vioin', channelFrom: 'WEIXIN' })
 
   // 失效 → 重新登录并重试一次
-  if (!(r.ok && r.data.success) && isAuthFail(errText(r)) && CFG.retryLogin && !st.retried) {
+  if (!(r.ok && isOk(r.data)) && isAuthFail(errText(r)) && CFG.retryLogin && !st.retried) {
     st.retried = true
     L.push('🔁 登录态失效，尝试重放登录换新 sign 后重试…')
     await reloginForRetry(acc, st, L)
@@ -345,7 +377,7 @@ async function doSign(st, L, acc) {
 
   // 自愈：QX 罐方式被拒 → 改成显式带会话 Cookie 再试一次（不再靠猜哪种对）
   if (
-    !(r.ok && r.data.success) &&
+    !(r.ok && isOk(r.data)) &&
     isAuthFail(errText(r)) &&
     CFG.sendCookie === 'auto' &&
     !st.triedExplicit
@@ -357,9 +389,9 @@ async function doSign(st, L, acc) {
   }
 
   // 记住了哪种方式能用，后面所有请求照做
-  if (r.ok && r.data.success && !st.cookieMode) st.cookieMode = 'jar'
+  if (r.ok && isOk(r.data) && !st.cookieMode) st.cookieMode = 'jar'
 
-  if (r.ok && r.data.success) {
+  if (r.ok && isOk(r.data)) {
     const obj = r.data.obj || {}
     const pk = obj.integralTaskSignPackageVOList
     if (pk && pk.length) {
@@ -382,7 +414,7 @@ async function doSign(st, L, acc) {
 // -------------------- 超值福利 --------------------
 async function doWelfare(st, L) {
   const r = await apiPost(st, U.welfare, { channel: 'czflqdlhbxcx' })
-  if (r.ok && r.data.success) {
+  if (r.ok && isOk(r.data)) {
     const obj = r.data.obj || {}
     let gifts = obj.giftList || []
     if (obj.extraGiftList && obj.extraGiftList.length) gifts = gifts.concat(obj.extraGiftList)
@@ -398,12 +430,12 @@ async function doWelfare(st, L) {
 // -------------------- 日常任务 --------------------
 async function doDailyTasks(st, L, acc) {
   let q = await apiPost(st, U.taskQuery, { channelType: '1', deviceId: deviceId() })
-  if (!(q.ok && q.data.success) && isAuthFail(errText(q)) && CFG.retryLogin && !st.retried) {
+  if (!(q.ok && isOk(q.data)) && isAuthFail(errText(q)) && CFG.retryLogin && !st.retried) {
     st.retried = true
     await reloginForRetry(acc, st, L)
     q = await apiPost(st, U.taskQuery, { channelType: '1', deviceId: deviceId() })
   }
-  if (!(q.ok && q.data.success && q.data.obj)) {
+  if (!(q.ok && isOk(q.data) && q.data.obj)) {
     L.push(`📝 日常任务: 查询失败(${errText(q)})`)
     markBlack(st, q)
     return
@@ -426,7 +458,7 @@ async function doDailyTasks(st, L, acc) {
     }
     if (t.taskCode) {
       const f = await apiPost(st, U.taskFinish, { taskCode: t.taskCode })
-      if (f.ok && f.data.success) finished++
+      if (f.ok && isOk(f.data)) finished++
       else details.push(`${t.title}: 完成失败(${errText(f)})`)
       await $.wait(1500)
     }
@@ -436,7 +468,7 @@ async function doDailyTasks(st, L, acc) {
       taskCode: t.taskCode,
       deviceId: deviceId()
     })
-    if (g.ok && g.data.success) rewarded++
+    if (g.ok && isOk(g.data)) rewarded++
     else details.push(`${t.title}: 领奖失败(${errText(g)})`)
     await $.wait(1200)
     markBlack(st, g)
@@ -445,7 +477,7 @@ async function doDailyTasks(st, L, acc) {
 
   const q2 = await apiPost(st, U.taskQuery, { channelType: '1', deviceId: deviceId() })
   let after = before
-  if (q2.ok && q2.data.success && q2.data.obj) after = num(q2.data.obj.totalPoint)
+  if (q2.ok && isOk(q2.data) && q2.data.obj) after = num(q2.data.obj.totalPoint)
 
   L.push(
     `💰 积分: ${before} → ${after}${after - before > 0 ? `（+${after - before}）` : ''}` +
@@ -457,12 +489,12 @@ async function doDailyTasks(st, L, acc) {
 // -------------------- 采蜜换大礼 --------------------
 async function doHoney(st, L, acc) {
   let list = await apiPost(st, U.honeyTaskDetail, {}, 'honey')
-  if (!(list.ok && list.data.success) && isAuthFail(errText(list)) && CFG.retryLogin && !st.retried) {
+  if (!(list.ok && isOk(list.data)) && isAuthFail(errText(list)) && CFG.retryLogin && !st.retried) {
     st.retried = true
     await reloginForRetry(acc, st, L)
     list = await apiPost(st, U.honeyTaskDetail, {}, 'honey')
   }
-  if (!(list.ok && list.data.success && list.data.obj && list.data.obj.list)) {
+  if (!(list.ok && isOk(list.data) && list.data.obj && list.data.obj.list)) {
     L.push(`📝 采蜜: ${errText(list)}`)
     markBlack(st, list)
     return
@@ -480,7 +512,7 @@ async function doHoney(st, L, acc) {
         if (await claimCoupon(st)) got++
       } else if (item.taskCode) {
         const f = await apiPost(st, U.honeyFinish, { taskCode: item.taskCode }, 'honey')
-        if (f.ok && f.data.success) done++
+        if (f.ok && isOk(f.data)) done++
         else L.push(`   └ 采蜜任务[${type}]: ${errText(f)}`)
       }
       if (type === 'BEES_GAME_TASK_TYPE') {
@@ -495,18 +527,18 @@ async function doHoney(st, L, acc) {
 
   const idx = await apiPost(st, U.honeyIndex, invitePayload(st), 'honey')
   let honeyInfo = ''
-  if (idx.ok && idx.data.success && idx.data.obj) {
+  if (idx.ok && isOk(idx.data) && idx.data.obj) {
     const obj = idx.data.obj
     const taskDetail = obj.taskDetail || []
     let receive = 0
     for (const t of taskDetail) {
       if (st.black) break
       const r = await apiPost(st, U.honeyReceive, { taskType: t.type }, 'honey')
-      if (r.ok && r.data.success) receive++
+      if (r.ok && isOk(r.data)) receive++
       await $.wait(1500)
     }
     const end = await apiPost(st, U.honeyIndex, invitePayload(st), 'honey')
-    const usable = end.ok && end.data.success && end.data.obj ? num(end.data.obj.usableHoney) : num(obj.usableHoney)
+    const usable = end.ok && isOk(end.data) && end.data.obj ? num(end.data.obj.usableHoney) : num(obj.usableHoney)
     const endTime = obj.activityEndTime ? `（本期 ${String(obj.activityEndTime).slice(0, 10)} 结束）` : ''
     honeyInfo = `丰蜜 ${usable}${endTime}｜收取${receive}次 任务${done}项`
   } else {
@@ -519,7 +551,7 @@ async function doHoney(st, L, acc) {
 async function honeyAdventure(st) {
   for (let i = 0; i < CFG.honeyGameRounds; i++) {
     const r = await apiPost(st, U.honeyGame, { gatherHoney: 20 }, 'honey')
-    if (r.ok && r.data.success) {
+    if (r.ok && isOk(r.data)) {
       await $.wait(1200)
       continue
     }
@@ -536,7 +568,7 @@ async function honeyAdventure(st) {
 // 生活特权领券（采蜜 VIP 任务）
 async function claimCoupon(st) {
   const r = await apiPost(st, U.couponList, { memGrade: 2, categoryCode: 'SHTQ', showCode: 'SHTQWNTJ' }, 'honey')
-  if (!(r.ok && r.data.success)) return false
+  if (!(r.ok && isOk(r.data))) return false
   const groups = r.data.obj
   if (!Array.isArray(groups)) return false
   let goods = []
@@ -557,7 +589,7 @@ async function claimCoupon(st) {
       },
       'honey'
     )
-    if (o.ok && o.data.success) return true
+    if (o.ok && isOk(o.data)) return true
   }
   return false
 }
@@ -571,7 +603,7 @@ async function doMemberDay(st, L, acc) {
   }
 
   const idx = await apiPost(st, U.mdIndex, invitePayload(st))
-  if (!(idx.ok && idx.data.success) || !idx.data.obj) {
+  if (!(idx.ok && isOk(idx.data)) || !idx.data.obj) {
     L.push(`📝 会员日: ${errText(idx)}`)
     markBlack(st, idx)
     return
@@ -582,13 +614,13 @@ async function doMemberDay(st, L, acc) {
 
   if (info.canReceiveInviteAward) {
     const a = await apiPost(st, U.mdInviteAward, invitePayload(st))
-    parts.push(a.ok && a.data.success ? '邀请奖励已领' : `邀请奖励失败(${errText(a)})`)
+    parts.push(a.ok && isOk(a.data) ? '邀请奖励已领' : `邀请奖励失败(${errText(a)})`)
   }
 
   for (let i = 0; i < lotteryNum; i++) {
     if (st.black) break
     const r = await apiPost(st, U.mdLottery, {})
-    if (r.ok && r.data.success) parts.push(`抽奖得【${(r.data.obj && r.data.obj.productName) || '空气'}】`)
+    if (r.ok && isOk(r.data)) parts.push(`抽奖得【${(r.data.obj && r.data.obj.productName) || '空气'}】`)
     else {
       parts.push(`抽奖失败(${errText(r)})`)
       markBlack(st, r)
@@ -607,7 +639,7 @@ async function doMemberDay(st, L, acc) {
 
 async function doMemberDayTasks(st) {
   const r = await apiPost(st, U.mdTaskList, { activityCode: 'MEMBER_DAY', channelType: 'MINI_PROGRAM' })
-  if (!(r.ok && r.data.success)) return `任务查询失败(${errText(r)})`
+  if (!(r.ok && isOk(r.data))) return `任务查询失败(${errText(r)})`
   const list = r.data.obj || []
   if (!Array.isArray(list)) return '任务列表为空'
 
@@ -631,7 +663,7 @@ async function doMemberDayTasks(st) {
         activityCode: 'MEMBER_DAY',
         channelType: 'MINI_PROGRAM'
       })
-      if (g.ok && g.data.success) got++
+      if (g.ok && isOk(g.data)) got++
       await $.wait(1000)
     }
   }
@@ -643,14 +675,14 @@ async function doMemberDayTasks(st) {
     for (let i = 0; i < times; i++) {
       if (st.black) break
       const f = await apiPost(st, U.mdFinish, { taskCode: t.taskCode })
-      if (f.ok && f.data.success) {
+      if (f.ok && isOk(f.data)) {
         done++
         const g = await apiPost(st, U.mdReward, {
           taskType: t.taskType,
           activityCode: 'MEMBER_DAY',
           channelType: 'MINI_PROGRAM'
         })
-        if (g.ok && g.data.success) got++
+        if (g.ok && isOk(g.data)) got++
       }
       await $.wait(1200)
     }
@@ -660,7 +692,7 @@ async function doMemberDayTasks(st) {
 
 async function doRedPacket(st) {
   const r = await apiPost(st, U.mdPacketStatus, {})
-  if (!(r.ok && r.data.success)) return `红包查询失败(${errText(r)})`
+  if (!(r.ok && isOk(r.data))) return `红包查询失败(${errText(r)})`
   const map = {}
   const list = (r.data.obj && r.data.obj.packetList) || []
   for (const p of list) map[num(p.level)] = num(p.count)
@@ -670,7 +702,7 @@ async function doRedPacket(st) {
     let cnt = map[lv] || 0
     while (cnt >= 2) {
       const m = await apiPost(st, U.mdPacketMerge, { level: lv, num: 2 })
-      if (!(m.ok && m.data.success)) break
+      if (!(m.ok && isOk(m.data))) break
       map[lv] = (map[lv] || 0) - 2
       map[lv + 1] = (map[lv + 1] || 0) + 1
       cnt -= 2
@@ -686,7 +718,7 @@ async function doRedPacket(st) {
   if (map[maxLv] > 0) {
     const d = await apiPost(st, U.mdPacketDraw, { level: String(maxLv) })
     let names = ''
-    if (d.ok && d.data.success && Array.isArray(d.data.obj)) {
+    if (d.ok && isOk(d.data) && Array.isArray(d.data.obj)) {
       names = d.data.obj.map((x) => x.couponName).filter(Boolean).join('、')
     }
     return `红包${owned ? owned + ' ' : ''}提取[${maxLv}级]: ${names || '空气'}`
@@ -848,6 +880,14 @@ function safeDecode(s) {
 function num(v) {
   const n = parseInt(v, 10)
   return isNaN(n) ? 0 : n
+}
+
+// 真实接口的 success 可能是布尔 false，也可能是字符串 "false"（universalSign 就是）
+// 非空字符串在 JS 里为真 —— 直接写 if (data.success) 会把失败当成功
+function isOk(d) {
+  if (!d || typeof d !== 'object') return false
+  const v = d.success
+  return v === true || v === 'true'
 }
 
 function shorten(s, n) {
