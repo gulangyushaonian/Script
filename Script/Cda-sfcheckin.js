@@ -38,6 +38,12 @@ $.messages = []
 // 刷新了 timeInterval 却留着旧 requestSign 反而必然对不上（实测 information error!_11）
 let REPLAY_VERBATIM = false
 
+// shareRedirect 是给微信 webview 用的（页面加载 jweixin JS-SDK）。
+// 不带微信 UA 时服务端只返回落地页，不做跳转、不下发会话 Cookie。
+const WX_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) ' +
+  'Mobile/15E148 MicroMessenger/8.0.49(0x18003128) NetType/WIFI Language/zh_CN'
+
 const CFG = {
   sign: true,          // 每日签到
   welfare: true,       // 超值福利签到红包
@@ -326,7 +332,8 @@ async function establishSession(acc, st, L) {
   // 对齐原版 loginweb()：这个 GET 一个 header 都不带，交给 QX 自带 cookie 存储
   try {
     const r2 = await $.http.get({
-      url: `${U.shareRedirect}?sign=${encodeURIComponent(sign)}&source=SFAPP&bizCode=${BIZ_CODE}`
+      url: `${U.shareRedirect}?sign=${encodeURIComponent(sign)}&source=SFAPP&bizCode=${BIZ_CODE}`,
+      headers: { 'User-Agent': WX_UA }
     })
     const n = harvest(resp_cookies(r2), st)
     const httpStatus = (r2 && r2.status) || '?'
@@ -339,7 +346,10 @@ async function establishSession(acc, st, L) {
     if (d2 && d2.success === false) {
       L.push(`   └ ⚠️ shareRedirect 被拒：${d2.errorMessage || shorten(JSON.stringify(d2), 80)}`)
     } else if (!d2) {
-      L.push(`   └ ℹ️ shareRedirect 返回页面（正常）：下发 Cookie 键 = ${ckNames.join(', ') || '无'}`)
+      L.push(`   └ ℹ️ shareRedirect 返回页面：下发 Cookie 键 = ${ckNames.join(', ') || '无'}`)
+      if (!ckNames.some((n) => /_login_/.test(n))) {
+        digPage(bodyStr).forEach((line) => L.push(`      🔎 ${line}`))
+      }
     }
     // 关键判断：有没有真正拿到登录会话 Cookie
     const hasSession = ckNames.some((n) => /_login_/.test(n))
@@ -971,6 +981,26 @@ function isOk(d) {
 }
 
 // 把非 JSON 回包的全部线索挖出来（定位 WAF/挑战页用）
+// 从返回的 HTML 里挖跳转目标和接口路径（定位"会话到底怎么建立的"）
+function digPage(html) {
+  const out = []
+  const loc = String(html).match(/(?:location\.(?:href|replace|assign)|window\.location)[^;]{0,160}/gi)
+  if (loc) out.push('跳转线索: ' + loc.slice(0, 2).join(' || ').slice(0, 200))
+  const paths = String(html).match(/\/mcs-mimp\/[A-Za-z0-9~\/_\.\-]{6,90}/g) || []
+  const up = []
+  paths.forEach((x) => {
+    if (up.indexOf(x) < 0 && up.length < 5) up.push(x)
+  })
+  if (up.length) out.push('页面内接口: ' + up.join(' , '))
+  const urls = String(html).match(/https?:\/\/[^"'\s)]{12,110}/g) || []
+  const uu = []
+  urls.forEach((x) => {
+    if (uu.indexOf(x) < 0 && uu.length < 4) uu.push(x)
+  })
+  if (uu.length) out.push('页面内 URL: ' + uu.join(' , '))
+  return out
+}
+
 function diagReply(r, label, L) {
   const h = (r && r.headers) || {}
   const b = String((r && r.body) || '')
