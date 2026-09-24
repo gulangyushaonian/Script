@@ -219,6 +219,8 @@ async function establishSession(acc, st, L) {
   let sign = ''
   let from = '重放登录回包'
   sign = await replayLogin(acc, st, L)
+  // 对齐原版：loginapp 与 loginweb 之间有 1 秒间隔
+  await $.wait(1000)
 
   if (!sign && acc.sign) {
     sign = String(acc.sign).trim()
@@ -248,14 +250,26 @@ async function establishSession(acc, st, L) {
     const bodyStr = String((r2 && r2.body) || '')
     const d2 = safeJson(bodyStr)
     $.log(`🔑 shareRedirect HTTP ${httpStatus}｜下发 Cookie ${n} 项（${Object.keys(st.jar).join(', ') || '无'}）`)
-    if (!d2) {
-      diagReply(r2, 'shareRedirect 回包非 JSON', L)
-    } else if (d2.success === false) {
+    // 注意：原版这一步【根本不解析回包】—— 服务端返回的是 H5 页面而不是 JSON，
+    // 所以「回包非 JSON」是正常现象，不是错误（曾经误报过，别再加警告文案）。
+    const ckNames = Object.keys(parseCookieObj(resp_cookies(r2)))
+    if (d2 && d2.success === false) {
       L.push(`   └ ⚠️ shareRedirect 被拒：${d2.errorMessage || shorten(JSON.stringify(d2), 80)}`)
+    } else if (!d2) {
+      L.push(`   └ ℹ️ shareRedirect 返回页面（正常）：下发 Cookie 键 = ${ckNames.join(', ') || '无'}`)
+    }
+    // 关键判断：有没有真正拿到登录会话 Cookie
+    const hasSession = ckNames.some((n) => /_login_/.test(n))
+    if (!hasSession) {
+      L.push(`   └ ⚠️ 没有拿到登录会话 Cookie（只有 ${ckNames.join(', ') || '无'}）—— 服务端没建立会话`)
+      L.push(`      💡 极可能 sign 已过期：请【抓完 token 后立刻】手动跑一次本任务来验证`)
     }
   } catch (e) {
     L.push(`   └ ⚠️ shareRedirect 失败: ${e.message || e}`)
   }
+
+  // 对齐原版：loginweb 与后续业务请求之间也有 1 秒间隔
+  await $.wait(1000)
 
   st.loginOk = true
   return true
