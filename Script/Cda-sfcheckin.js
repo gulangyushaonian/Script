@@ -249,7 +249,7 @@ async function establishSession(acc, st, L) {
     const d2 = safeJson(bodyStr)
     $.log(`🔑 shareRedirect HTTP ${httpStatus}｜下发 Cookie ${n} 项（${Object.keys(st.jar).join(', ') || '无'}）`)
     if (!d2) {
-      L.push(`   └ ⚠️ shareRedirect 回包非 JSON（HTTP ${httpStatus}，前 80 字：${shorten(bodyStr, 80)}）`)
+      diagReply(r2, 'shareRedirect 回包非 JSON', L)
     } else if (d2.success === false) {
       L.push(`   └ ⚠️ shareRedirect 被拒：${d2.errorMessage || shorten(JSON.stringify(d2), 80)}`)
     }
@@ -857,6 +857,22 @@ function isOk(d) {
   if (!d || typeof d !== 'object') return false
   const v = d.success
   return v === true || v === 'true'
+}
+
+// 把非 JSON 回包的全部线索挖出来（定位 WAF/挑战页用）
+function diagReply(r, label, L) {
+  const h = (r && r.headers) || {}
+  const b = String((r && r.body) || '')
+  const hk = Object.keys(h)
+    .map((k) => `${k}=${shorten(String(h[k]).split(';')[0], 40)}`)
+    .join(' | ')
+  L.push(`   └ 🔍 ${label} 诊断：HTTP ${(r && r.status) || '?'}`)
+  L.push(`      响应头: ${shorten(hk, 220) || '(空)'}`)
+  const t = b.match(/<title[^>]*>([^<]{0,100})<\/title>/i)
+  if (t) L.push(`      页面标题: ${t[1].trim()}`)
+  const sc = (b.match(/<script[^>]*src=["']([^"']+)["']/gi) || []).slice(0, 2).join(' ')
+  if (sc) L.push(`      外部脚本: ${shorten(sc, 160)}`)
+  L.push(`      正文前 300 字: ${shorten(b.replace(/\s+/g, ' '), 300) || '(空)'}`)
 }
 
 function shorten(s, n) {
