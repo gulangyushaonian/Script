@@ -282,8 +282,9 @@ async function replayLogin(acc, st, L) {
     const r = await $.http.post({
       url: acc.url,
       body: acc.body,
-      headers: cleanReplayHeaders(acc.headers)
+      headers: cleanReplayHeaders(acc.headers, st)
     })
+    if (st.refreshedTs) $.log(`🕒 已把 timeInterval 刷新为当前时间（原值来自抓包时刻，早已过期）`)
     const status = (r && r.status) || '?'
     const bodyStr = String((r && r.body) || '')
     const n = harvest(resp_cookies(r), st)
@@ -326,7 +327,7 @@ function digSign(bodyStr) {
 }
 
 // 重放登录请求时：去掉会造成冲突/失效的头部，但保留 APP 自定义头（syscode/platform 等）
-function cleanReplayHeaders(headers) {
+function cleanReplayHeaders(headers, st) {
   // 原版只做一件事：delete loginOpts.headers.Cookie。别的一律原样重放。
   const drop = ['cookie', 'content-length']
   const out = {}
@@ -334,6 +335,17 @@ function cleanReplayHeaders(headers) {
   Object.keys(src).forEach((k) => {
     if (drop.indexOf(k.toLowerCase()) >= 0) return
     out[k] = src[k]
+  })
+
+  // 关键修复：timeInterval 是【抓包那一刻】的毫秒时间戳，服务端用它判断请求时效。
+  // 上午抓包、晚上重放，送过去的还是上午的时间 → 必然判过期
+  // （症状就是「用户权限有误」/「information error」）。重放时必须刷成当前时间。
+  // 注：同批的 requestSign 带服务端盐值，客户端算不出来，只能原样带上。
+  Object.keys(out).forEach((k) => {
+    if (k.toLowerCase() === 'timeinterval') {
+      out[k] = String(Date.now())
+      if (st) st.refreshedTs = true
+    }
   })
   if (!hasHeaderKey(out, 'content-type')) out['Content-Type'] = 'application/json'
   return out
