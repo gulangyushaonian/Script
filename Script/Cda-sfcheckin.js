@@ -38,6 +38,11 @@ const CFG = {
   maxPacketLevel: 8,   // 会员日红包最高等级
   inviteUserId: '',    // 可选：邀请人 userId（留空则用本账号 userId）
   cleanDead: true,     // 移除连登录 URL 都没有的坏数据
+  cleanFailed: true,   // 本轮报错的账号从存储移除；没报错的保留（清干净后可设 false）
+  sendCookie: 'auto',  // 'auto' = 先不发 Cookie（靠 QX 自带罐，与原版一致）；
+                       //          若服务端拒绝，自动改成显式发会话 Cookie 再试一次。
+                       // true  = 总是发 Cookie（Node/青龙 等没有 cookie 罐的环境用）
+                       // false = 总是不发
   retryLogin: true,    // 失效时自动重新登录并重试一次
   waitAccount: 2000    // 账号之间间隔（毫秒）
 }
@@ -101,6 +106,7 @@ const U = {
   $.log(`\n🔔 发现 ${accounts.length} 个顺丰账号，开始执行...\n`)
   const blocks = []
   const dead = []
+  const failed = []
   for (let i = 0; i < accounts.length; i++) {
     const acc = accounts[i]
     const tag = `账号${i + 1}`
@@ -113,14 +119,26 @@ const U = {
       blocks.push(`👤 ${tag} ${acc.mobile || ''}\n❌ 执行异常: ${e.message || e}`)
     }
     if (acc.__dead) dead.push(acc)
+    else if (acc.__failed) failed.push(acc)
     if (i < accounts.length - 1) await $.wait(CFG.waitAccount)
   }
 
-  if (dead.length > 0 && CFG.cleanDead) {
-    const alive = accounts.filter((a) => !a.__dead)
+  // 清理：__dead（存档结构无效）+ __failed（本轮报错，如取不到 sign / 登录被拒）
+  const removable = []
+  if (CFG.cleanDead) dead.forEach((a) => removable.push(a))
+  if (CFG.cleanFailed) failed.forEach((a) => removable.push(a))
+
+  if (removable.length > 0) {
+    const alive = accounts.filter((a) => removable.indexOf(a) < 0)
     $.setdata(JSON.stringify(alive), $.KEY_login)
-    blocks.push(`🧹 已自动移除 ${dead.length} 个无效账号，当前剩余 ${alive.length} 个`)
-    $.log(`🧹 已自动移除 ${dead.length} 个无效账号`)
+    const parts = []
+    if (CFG.cleanDead && dead.length) parts.push(`无效存档 ${dead.length} 个`)
+    if (CFG.cleanFailed && failed.length) parts.push(`报错账号 ${failed.length} 个`)
+    blocks.push(`🧹 已自动移除${parts.join('、')}，当前剩余 ${alive.length} 个
+   └ 保留的都是本轮没报错的；重新获取 token 后会自动加回`)
+    $.log(`🧹 已自动移除${parts.join('、')}，剩余 ${alive.length} 个`)
+  } else if (failed.length > 0) {
+    blocks.push(`📌 ${failed.length} 个账号本轮报错，已保留（cleanFailed=false）`)
   }
 
   const msg = blocks.join('\n\n')
@@ -155,6 +173,7 @@ async function runAccount(acc, tag) {
   //    只会刷出一堆「用户信息失效」误导排查。
   const sessionOk = await establishSession(acc, st, L)
   if (!sessionOk) {
+    acc.__failed = true
     L.push('⛔ 会话建立失败，本账号跳过（未发任何业务请求）')
     return L
   }
@@ -215,10 +234,16 @@ async function establishSession(acc, st, L) {
     )
     const n = harvest(resp_cookies(r2), st)
     const keys = Object.keys(st.jar)
-    if (n) {
-      $.log(`🔑 换取会话成功: 新 Cookie ${n} 项（${keys.join(', ')}）`)
-    } else if (!keys.length) {
-      L.push(`   └ ⚠️ shareRedirect 未下发会话 Cookie（HTTP ${(r2 && r2.status) || '?'}）`)
+    const httpStatus = (r2 && r2.status) || '?'
+    const bodyStr = String((r2 && r2.body) || '')
+    const d2 = safeJson(bodyStr)
+    $.log(`🔑 shareRedirect HTTP ${httpStatus}｜新 Cookie ${n} 项（${keys.join(', ') || '无'}）`)
+    if (!d2) {
+      L.push(`   └ ⚠️ shareRedirect 回包非 JSON（HTTP ${httpStatus}，前 80 字：${shorten(bodyStr, 80)}）`)
+    } else if (d2.success === false) {
+      L.push(`   └ ⚠️ shareRedirect 被拒：${d2.errorMessage || shorten(JSON.stringify(d2), 80)}`)
+    } else if (!n && !keys.length) {
+      L.push(`   └ ⚠️ shareRedirect 未下发会话 Cookie（HTTP ${httpStatus}）`)
     }
   } catch (e) {
     L.push(`   └ ⚠️ shareRedirect 失败: ${e.message || e}`)
@@ -291,6 +316,13 @@ function cleanReplayHeaders(headers) {
   return out
 }
 
+// 是否在请求里显式携带 Cookie
+function cookieShouldSend(st) {
+  if (st.cookieMode === 'explicit') return true
+  if (st.cookieMode === 'jar') return false
+  return CFG.sendCookie === true
+}
+
 function hasHeaderKey(headers, name) {
   const keys = Object.keys(headers || {})
   for (let i = 0; i < keys.length; i++) {
@@ -311,6 +343,22 @@ async function doSign(st, L, acc) {
     r = await apiPost(st, U.sign, { comeFrom: 'vioin', channelFrom: 'WEIXIN' })
   }
 
+  // 自愈：QX 罐方式被拒 → 改成显式带会话 Cookie 再试一次（不再靠猜哪种对）
+  if (
+    !(r.ok && r.data.success) &&
+    isAuthFail(errText(r)) &&
+    CFG.sendCookie === 'auto' &&
+    !st.triedExplicit
+  ) {
+    st.triedExplicit = true
+    st.cookieMode = 'explicit'
+    L.push(`🔁 改用显式会话 Cookie 重试（Cookie 键: ${Object.keys(st.jar).join(', ') || '无'}）`)
+    r = await apiPost(st, U.sign, { comeFrom: 'vioin', channelFrom: 'WEIXIN' })
+  }
+
+  // 记住了哪种方式能用，后面所有请求照做
+  if (r.ok && r.data.success && !st.cookieMode) st.cookieMode = 'jar'
+
   if (r.ok && r.data.success) {
     const obj = r.data.obj || {}
     const pk = obj.integralTaskSignPackageVOList
@@ -325,6 +373,7 @@ async function doSign(st, L, acc) {
   L.push(`❌ 签到失败: ${errText(r)}`)
   if (isAuthFail(errText(r))) {
     st.black = true
+    acc.__failed = true
     L.push('   └ 说明：顺丰拒绝了这次登录态。请在【顺丰 APP → 我的】里重新获取 token（抓包目标是 universalSign，只有 APP 端才有）。')
     L.push(`   └ 已带上的 Cookie 键: ${Object.keys(st.jar).join(', ') || '(空)'}`)
   }
@@ -653,8 +702,12 @@ function buildHeaders(st, opts) {
     'Content-Type': 'application/json',
     platform: 'MINI_PROGRAM'
   }
+  // 发不发 Cookie 由 cookieMode 决定：
+  //   'jar'      不发 —— QX 自带 cookie 罐持有会话（原版就是这么工作的，首选）
+  //   'explicit' 发   —— 上面那招被服务端拒了，改成自己带会话 Cookie
+  //   未定       按 CFG.sendCookie（'auto' 视作不发）
   const ck = jarToString(st.jar)
-  if (ck) h.Cookie = ck // 只带本轮收割到的新 Cookie；没有就交给 QX 自带 cookie 罐
+  if (cookieShouldSend(st) && ck) h.Cookie = ck
   if (o.honey) h.channel = 'wxwdsj'
   if (o.signature) {
     h.syscode = SYS_CODE
