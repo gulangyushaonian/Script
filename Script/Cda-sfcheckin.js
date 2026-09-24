@@ -47,10 +47,8 @@ const CFG = {
   waitAccount: 2000    // 账号之间间隔（毫秒）
 }
 
-const SIGN_TOKEN = 'wwesldfs29aniversaryvdld29'
 // shareRedirect 固定 bizCode（原版保持一致）
 const BIZ_CODE = '647@RnlvejM1R3VTSVZ6d3BNaXJxRFpOUVVtQkp0ZnFpNDBKdytobm5TQWxMeHpVUXVrVzVGMHVmTU5BVFA1bXlwcw=='
-const SYS_CODE = 'MCS-MIMP-CORE'
 const API_BASE = 'https://mcs-mimp-web.sf-express.com/mcs-mimp/'
 
 // Cookie 属性名（解析 Set-Cookie 时要跳过）。必须声明在 IIFE 之前，否则 TDZ 报错
@@ -94,10 +92,10 @@ const U = {
       accounts = []
     }
   }
-  // cookie / sign / url 任一存在即视为有效账号（cookie-only 是最推荐的状态）
-  // 三样全无的是废存档：既跑不了也别留在存储里发霉，归到 deadRaw 交给后面的清理
-  const deadRaw = accounts.filter((a) => !a || !(a.cookie || a.sign || a.url))
-  accounts = accounts.filter((a) => a && (a.cookie || a.sign || a.url))
+  // 原版流程必须有 url + body（要重放登录请求）。缺的就是废存档：
+  // 既跑不了，也别留在存储里发霉 —— 归到 deadRaw 交给后面的清理
+  const deadRaw = accounts.filter((a) => !a || !a.url || !a.body)
+  accounts = accounts.filter((a) => a && a.url && a.body)
 
   if (accounts.length === 0) {
     const tip =
@@ -168,7 +166,6 @@ async function runAccount(acc, tag) {
   const st = {
     mobile: String(acc.mobile || '').trim() || getMobile(acc),
     userId: String(acc.userId || '').trim() || getUserId(acc),
-    ua: getUA(acc),
     jar: jar,
     black: false,
     retried: false,
@@ -176,9 +173,9 @@ async function runAccount(acc, tag) {
   }
   const L = [`👤 ${tag} ${st.mobile || '(未知手机号)'}`]
 
-  if (!acc.sign && !acc.cookie && (!acc.url || !acc.body)) {
+  if (!acc.url || !acc.body) {
     acc.__dead = true
-    L.push('❌ 存档里既没有 sign 也没有可重放的 url/body，请重新获取 token（会从列表移除）')
+    L.push('❌ 存档里缺 url/body（没有可重放的登录请求），请重新抓一次会话（会从列表移除）')
     return L
   }
 
@@ -216,66 +213,45 @@ async function runAccount(acc, tag) {
 
 // -------------------- 会话建立（优先用存档 sign，重放仅作兜底） --------------------
 async function establishSession(acc, st, L) {
-  // ① 抓到过完整 Cookie → 原样回放，最可靠，连 shareRedirect 都不用走
-  if (acc.cookie) {
-    const jar = {}
-    String(acc.cookie)
-      .split(';')
-      .forEach((seg) => {
-        const i = seg.indexOf('=')
-        if (i < 1) return
-        const k = seg.slice(0, i).trim()
-        if (k) jar[k] = seg.slice(i + 1).trim()
-      })
-    st.jar = jar
-    st.cookieMode = 'explicit'
-    st.loginOk = true
-    L.push(`   └ 使用抓包到的 Cookie（${Object.keys(jar).join(', ') || '空'}）`)
-    return true
-  }
+  // 对齐原版 loginapp()：每次运行都重放登录请求，换一个【新的】sign。
+  // 原版就是靠这一步取得可用会话 —— 别自作聪明改成"复用上次存的 sign"，
+  // 那个 sign 早就过期了（症状：shareRedirect 回 HTML / 业务接口报用户信息失效）。
+  let sign = ''
+  let from = '重放登录回包'
+  sign = await replayLogin(acc, st, L)
 
-  let sign = String(acc.sign || '').trim()
-  let from = '存档sign'
-
-  // 存档没有 sign 才重放登录请求
-  if (!sign) {
-    from = '重放登录'
-    sign = await replayLogin(acc, st, L)
+  if (!sign && acc.sign) {
+    sign = String(acc.sign).trim()
+    from = '存档sign(重放失败兜底)'
   }
-  // 再兜底：捕获 URL 自带 sign 参数
   if (!sign) {
     sign = extractSign(safeDecode(acc.url || ''))
     if (sign) from = 'URL参数'
   }
 
   if (!sign) {
-    L.push('❌ 未取到 sign：存档没有 sign，重放登录也没拿到。')
-    L.push('   └ 请在【顺丰 APP → 我的】重新获取 token（新脚本会直接抓响应里的 sign）')
+    L.push('❌ 未取到 sign：重放登录没拿到，存档里也没有')
+    L.push('   └ 请在【顺丰 APP → 我的】重新抓一次会话')
     return false
   }
 
   st.sign = sign
   $.log(`🔑 使用${from}的 sign: ${shorten(sign, 20)}…`)
 
-  // 用 sign 换 mcs-mimp-web 会话 Cookie
+  // 对齐原版 loginweb()：这个 GET 一个 header 都不带，交给 QX 自带 cookie 存储
   try {
-    const r2 = await rawRequest(
-      'GET',
-      `${U.shareRedirect}?sign=${encodeURIComponent(sign)}&source=SFAPP&bizCode=${BIZ_CODE}`,
-      st
-    )
+    const r2 = await $.http.get({
+      url: `${U.shareRedirect}?sign=${encodeURIComponent(sign)}&source=SFAPP&bizCode=${BIZ_CODE}`
+    })
     const n = harvest(resp_cookies(r2), st)
-    const keys = Object.keys(st.jar)
     const httpStatus = (r2 && r2.status) || '?'
     const bodyStr = String((r2 && r2.body) || '')
     const d2 = safeJson(bodyStr)
-    $.log(`🔑 shareRedirect HTTP ${httpStatus}｜新 Cookie ${n} 项（${keys.join(', ') || '无'}）`)
+    $.log(`🔑 shareRedirect HTTP ${httpStatus}｜下发 Cookie ${n} 项（${Object.keys(st.jar).join(', ') || '无'}）`)
     if (!d2) {
       L.push(`   └ ⚠️ shareRedirect 回包非 JSON（HTTP ${httpStatus}，前 80 字：${shorten(bodyStr, 80)}）`)
     } else if (d2.success === false) {
       L.push(`   └ ⚠️ shareRedirect 被拒：${d2.errorMessage || shorten(JSON.stringify(d2), 80)}`)
-    } else if (!n && !keys.length) {
-      L.push(`   └ ⚠️ shareRedirect 未下发会话 Cookie（HTTP ${httpStatus}）`)
     }
   } catch (e) {
     L.push(`   └ ⚠️ shareRedirect 失败: ${e.message || e}`)
@@ -328,16 +304,17 @@ function digSign(bodyStr) {
       for (const k of p) {
         c = c && typeof c === 'object' ? c[k] : null
       }
-      if (c && typeof c === 'string' && c.length > 7) return String(c).trim()
+      if (c && typeof c === 'string' && c.trim().length >= 4) return String(c).trim()
     }
   }
-  const m = String(bodyStr || '').match(/"sign"\s*:\s*"([^"]{8,})"/)
+  const m = String(bodyStr || '').match(/"sign"\s*:\s*"([^"]{4,})"/)
   return m ? m[1] : ''
 }
 
 // 重放登录请求时：去掉会造成冲突/失效的头部，但保留 APP 自定义头（syscode/platform 等）
 function cleanReplayHeaders(headers) {
-  const drop = ['cookie', 'host', 'content-length', 'connection', 'accept-encoding']
+  // 原版只做一件事：delete loginOpts.headers.Cookie。别的一律原样重放。
+  const drop = ['cookie', 'content-length']
   const out = {}
   const src = headers || {}
   Object.keys(src).forEach((k) => {
@@ -729,29 +706,21 @@ async function doRedPacket(st) {
 // ==================== 请求层 ====================
 function buildHeaders(st, opts) {
   const o = opts || {}
-  const h = {
-    'User-Agent': st.ua,
-    'Content-Type': 'application/json',
-    platform: 'MINI_PROGRAM'
-  }
-  // 发不发 Cookie 由 cookieMode 决定：
-  //   'jar'      不发 —— QX 自带 cookie 罐持有会话（原版就是这么工作的，首选）
-  //   'explicit' 发   —— 上面那招被服务端拒了，改成自己带会话 Cookie
-  //   未定       按 CFG.sendCookie（'auto' 视作不发）
+  const h = {}
+  // 严格对齐原版：POST 只发一个 Content-Type: application/json，其余什么都不加
+  // （原版连 User-Agent 都不发）。之前自己加 platform / syscode / timestamp /
+  // signature、以及手塞 Cookie 统统是多余的 —— 手塞的 Cookie 会覆盖 QX 自动
+  // 维护的会话，这正是「用户信息失效，请退出重新进入」的根因。
+  if (String(o.method || 'POST').toUpperCase() !== 'GET') h['Content-Type'] = 'application/json'
+  if (o.honey) h.channel = 'wxwdsj'
+  // 兜底：仅当首选方式被服务端拒绝，才改成显式带会话 Cookie（正常永远走不到）
   const ck = jarToString(st.jar)
   if (cookieShouldSend(st) && ck) h.Cookie = ck
-  if (o.honey) h.channel = 'wxwdsj'
-  if (o.signature) {
-    h.syscode = SYS_CODE
-    const ts = String(Date.now())
-    h.timestamp = ts
-    h.signature = md5(`token=${SIGN_TOKEN}&timestamp=${ts}&sysCode=${SYS_CODE}`)
-  }
   return h
 }
 
 async function rawRequest(method, url, st, body, opts) {
-  const headers = buildHeaders(st, opts)
+  const headers = buildHeaders(st, Object.assign({}, opts, { method: method }))
   if (String(method).toUpperCase() === 'GET') return await $.http.get({ url: url, headers: headers })
   return await $.http.post({ url: url, body: body || '', headers: headers })
 }
@@ -919,14 +888,6 @@ function getCookie(acc) {
   return ''
 }
 
-function getUA(acc) {
-  const h = acc.headers || {}
-  const keys = Object.keys(h)
-  for (let i = 0; i < keys.length; i++) {
-    if (keys[i].toLowerCase() === 'user-agent') return String(h[keys[i]] || '').trim()
-  }
-  return 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.30'
-}
 
 function cookieVal(cookie, key) {
   const m = String(cookie || '').match(new RegExp('(?:^|;\\s*)' + key + '=([^;]*)'))
