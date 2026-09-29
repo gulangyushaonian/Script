@@ -4,7 +4,7 @@ host-keyword, api.trakt.tv, direct
 host-keyword, api.1000gxf.com, direct
 host-keyword, usa.laitening.com.cn, direct
 host, 154.21.88.9, direct
-host, api-user.zepp.com, proxy
+host, api-user.zepp.com, direct
 host, msmp.abchina.com.cn, reject
 host-suffix, meitu.com, direct
 
